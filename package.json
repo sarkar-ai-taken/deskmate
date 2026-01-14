@@ -4,13 +4,13 @@
   "description": "Control your Mac from anywhere using natural language via Telegram or MCP.",
   "author": "Deskmate Contributors",
   "license": "MIT",
-  "homepage": "https://github.com/deskmate-ai/deskmate#readme",
+  "homepage": "https://github.com/sarkar-ai-taken/deskmate#readme",
   "bugs": {
-    "url": "https://github.com/deskmate-ai/deskmate/issues"
+    "url": "https://github.com/sarkar-ai-taken/deskmate/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deskmate-ai/deskmate.git"
+    "url": "git+https://github.com/sarkar-ai-taken/deskmate.git"
   },
   "keywords": [
     "telegram",

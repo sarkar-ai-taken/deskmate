@@ -107,7 +107,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 
 ```bash
 # Clone and install
-git clone https://github.com/deskmate-ai/deskmate.git
+git clone https://github.com/sarkar-ai-taken/deskmate.git
 cd deskmate
 npm install --legacy-peer-deps
 

@@ -39,7 +39,7 @@ git clone https://github.com/YOUR_USERNAME/deskmate.git
 cd deskmate
 
 # Add upstream remote
-git remote add upstream https://github.com/deskmate-ai/deskmate.git
+git remote add upstream https://github.com/sarkar-ai-taken/deskmate.git
 
 # Install dependencies
 npm install --legacy-peer-deps

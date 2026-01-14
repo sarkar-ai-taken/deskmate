@@ -81,7 +81,7 @@ The installer will guide you through granting access to specific folders (Deskto
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/deskmate-ai/deskmate.git
+git clone https://github.com/sarkar-ai-taken/deskmate.git
 cd deskmate
 ```
 
