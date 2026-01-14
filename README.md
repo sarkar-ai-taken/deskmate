@@ -1,4 +1,4 @@
-# Sarkar Local Agent
+# Deskmate
 
 Control your Mac from anywhere using natural language via Telegram or MCP.
 
@@ -8,7 +8,7 @@ Control your Mac from anywhere using natural language via Telegram or MCP.
 
 ## What is this?
 
-Sarkar Local Agent lets you control your Mac remotely through two interfaces:
+Deskmate lets you control your Mac remotely through two interfaces:
 
 1. **Telegram Bot** - Chat with your Mac from anywhere using natural language
 2. **MCP Server** - Expose your Mac as a tool server for Claude Desktop or any MCP client
@@ -81,8 +81,8 @@ The installer will guide you through granting access to specific folders (Deskto
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/sarkar-ai-taken/sarkar-local-agent.git
-cd sarkar-local-agent
+git clone https://github.com/deskmate-ai/deskmate.git
+cd deskmate
 ```
 
 ### 2. Create a Telegram Bot
@@ -109,7 +109,7 @@ ALLOWED_USER_ID=your_telegram_user_id
 ANTHROPIC_API_KEY=your_anthropic_api_key
 WORKING_DIR=/Users/yourusername  # Default directory for commands
 LOG_LEVEL=info                   # debug, info, warn, error, silent
-BOT_NAME=Sarkar Local Agent             # Optional: customize the bot's name
+BOT_NAME=Deskmate             # Optional: customize the bot's name
 ```
 
 ### 5. Install and run
@@ -141,6 +141,7 @@ Open Telegram, find your bot, and send `/start`.
 | Command | Description |
 |---------|-------------|
 | `/start` | Show welcome message |
+| `/screenshot` | Take a screenshot and send it |
 | `/status` | Show system info and session status |
 | `/reset` | Clear conversation memory and start fresh |
 
@@ -165,6 +166,10 @@ Open Telegram, find your bot, and send `/start`.
 - "What's using port 8080?"
 - "Show me the last 50 lines of the error log"
 - "Check if nginx is running"
+
+**Visual:**
+- "Take a screenshot"
+- "Show me what's on the screen"
 
 ## Running Modes
 
@@ -201,9 +206,9 @@ The MCP (Model Context Protocol) server exposes your local machine as a tool ser
    ```json
    {
      "mcpServers": {
-       "sarkar-local-agent": {
+       "deskmate": {
          "command": "node",
-         "args": ["/path/to/sarkar-local-agent/dist/index.js", "mcp"],
+         "args": ["/path/to/deskmate/dist/index.js", "mcp"],
          "env": {
            "WORKING_DIR": "/Users/yourname"
          }
@@ -234,13 +239,13 @@ tail -f logs/stdout.log
 tail -f logs/stderr.log
 
 # Stop the service
-launchctl unload ~/Library/LaunchAgents/com.sarkar-local-agent.service.plist
+launchctl unload ~/Library/LaunchAgents/com.deskmate.service.plist
 
 # Start the service
-launchctl load ~/Library/LaunchAgents/com.sarkar-local-agent.service.plist
+launchctl load ~/Library/LaunchAgents/com.deskmate.service.plist
 
 # Check status
-launchctl list | grep sarkar-local-agent
+launchctl list | grep deskmate
 
 # Uninstall completely
 ./uninstall.sh
@@ -280,23 +285,46 @@ launchctl list | grep sarkar-local-agent
 **Permission denied errors?**
 - Re-run `./install.sh` and go through the permissions setup
 - Or manually grant permissions in System Settings > Privacy & Security
-- Make sure to add both your terminal app AND `sarkar-local-agent` to the lists
+- Make sure to add both your terminal app AND `deskmate` to the lists
 
 **Screenshots not working?**
 - Grant Screen Recording permission in System Settings > Privacy & Security > Screen Recording
 - You may need to restart the service after granting permission
 
+## Architecture
+
+The project uses an **abstracted agent provider** system, making it easy to swap AI backends:
+
+```
+src/core/agent/
+├── types.ts              # AgentProvider interface
+├── factory.ts            # Provider factory
+├── index.ts              # Exports
+└── providers/
+    └── claude-code.ts    # Claude Code implementation
+```
+
+**Current provider:** Claude Code (via `@anthropic-ai/claude-agent-sdk`)
+
+To use a different provider, set the `AGENT_PROVIDER` environment variable or implement a new provider (see Contributing).
+
 ## Future Work / Help Wanted
 
 We're looking for community contributions in these areas:
 
-**1. Pure Open Source Implementation**
-- Currently this project relies on Claude Code Agent SDK. We'd love help making it fully open source by implementing alternatives using purely open-source AI agents or frameworks.
-- If you have experience with open-source LLM tooling, we'd appreciate your input!
+**1. Additional Agent Providers**
+The codebase is designed to support multiple AI backends. We'd love help implementing:
+- `openai` - OpenAI GPT-4 with function calling
+- `anthropic-direct` - Direct Anthropic API (without Claude Code)
+- `ollama` - Local LLMs via Ollama
+- `langchain` - LangChain-based agents
+
+See `src/core/agent/providers/` for implementation examples.
 
 **2. More Efficient Background Job Handling**
-- The current `launchd` + `caffeinate` approach works but may not be optimal.
-- Looking for contributors who can suggest or implement more efficient ways to run background services on macOS.
+- The current `launchd` + `caffeinate` approach works but may not be optimal
+- Looking for better approaches for different device types (always-on Mac Mini vs MacBook)
+- Cross-platform support (Linux systemd, Windows services)
 
 If you're interested in tackling any of these, please open an issue to discuss your approach!
 

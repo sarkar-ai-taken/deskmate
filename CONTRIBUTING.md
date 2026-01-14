@@ -1,4 +1,4 @@
-# Contributing to Sarkar Local Agent
+# Contributing to Deskmate
 
 Thank you for your interest in contributing! This document provides guidelines and information for contributors.
 
@@ -35,11 +35,11 @@ Thank you for your interest in contributing! This document provides guidelines a
 ```bash
 # Fork the repository on GitHub
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/sarkar-local-agent.git
-cd sarkar-local-agent
+git clone https://github.com/YOUR_USERNAME/deskmate.git
+cd deskmate
 
 # Add upstream remote
-git remote add upstream https://github.com/sarkar-ai-taken/sarkar-local-agent.git
+git remote add upstream https://github.com/deskmate-ai/deskmate.git
 
 # Install dependencies
 npm install --legacy-peer-deps

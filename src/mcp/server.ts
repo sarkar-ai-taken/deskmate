@@ -13,7 +13,7 @@ export async function startMcpServer(): Promise<void> {
   const executor = new Executor();
 
   const server = new McpServer({
-    name: "sarkar-local-agent",
+    name: "deskmate",
     version: "1.0.0",
   });
 

@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLIST_NAME="com.sarkar-local-agent.service"
+PLIST_NAME="com.deskmate.service"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 LOGS_DIR="$PROJECT_DIR/logs"
 NODE_PATH=$(which node)
@@ -19,7 +19,7 @@ CLAUDE_DESKTOP_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_c
 
 echo -e "${BLUE}"
 echo "╔════════════════════════════════════════╗"
-echo "║     Sarkar Local Agent Installer       ║"
+echo "║     Deskmate Installer       ║"
 echo "╚════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -65,7 +65,7 @@ echo -e "${GREEN}✓ Logs directory created: $LOGS_DIR${NC}"
 echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${YELLOW}Setting up macOS permissions...${NC}"
 echo ""
-echo -e "Sarkar Local Agent needs the following permissions to work properly:"
+echo -e "Deskmate needs the following permissions to work properly:"
 echo -e "  • ${GREEN}Screen Recording${NC} - To take screenshots when requested"
 echo -e "  • ${GREEN}Accessibility${NC} - To control system functions"
 echo -e "  • ${GREEN}Full Disk Access${NC} - To read/write files anywhere"
@@ -102,7 +102,7 @@ if [ "$SETUP_PERMISSIONS" = "y" ] || [ "$SETUP_PERMISSIONS" = "Y" ]; then
     if [ "$OPEN_ACCESSIBILITY" = "y" ] || [ "$OPEN_ACCESSIBILITY" = "Y" ]; then
         echo -e "   ${YELLOW}Opening System Settings > Privacy & Security > Accessibility...${NC}"
         open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-        echo -e "   ${GREEN}Please add '$TERMINAL_APP' and/or 'sarkar-local-agent' to the list${NC}"
+        echo -e "   ${GREEN}Please add '$TERMINAL_APP' and/or 'deskmate' to the list${NC}"
         read -p "   Press Enter when done..."
     fi
 
@@ -114,7 +114,7 @@ if [ "$SETUP_PERMISSIONS" = "y" ] || [ "$SETUP_PERMISSIONS" = "Y" ]; then
     if [ "$OPEN_DISK" = "y" ] || [ "$OPEN_DISK" = "Y" ]; then
         echo -e "   ${YELLOW}Opening System Settings > Privacy & Security > Full Disk Access...${NC}"
         open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-        echo -e "   ${GREEN}Please add '$TERMINAL_APP' and/or 'sarkar-local-agent' to the list${NC}"
+        echo -e "   ${GREEN}Please add '$TERMINAL_APP' and/or 'deskmate' to the list${NC}"
         read -p "   Press Enter when done..."
     fi
 
@@ -138,7 +138,7 @@ if [ "$SETUP_PERMISSIONS" = "y" ] || [ "$SETUP_PERMISSIONS" = "Y" ]; then
     if [ "$OPEN_LOGIN" = "y" ] || [ "$OPEN_LOGIN" = "Y" ]; then
         echo -e "   ${YELLOW}Opening System Settings > General > Login Items...${NC}"
         open "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
-        echo -e "   ${GREEN}Ensure 'sarkar-local-agent' is enabled under 'Allow in the Background'${NC}"
+        echo -e "   ${GREEN}Ensure 'deskmate' is enabled under 'Allow in the Background'${NC}"
         read -p "   Press Enter when done..."
     fi
 
@@ -459,9 +459,9 @@ if [ "$CONFIGURE_CLAUDE_DESKTOP" = true ]; then
         cp "$CLAUDE_DESKTOP_CONFIG" "$CLAUDE_DESKTOP_CONFIG.backup"
         echo -e "${GREEN}✓ Backed up existing config${NC}"
 
-        # Check if sarkar-local-agent already configured
-        if grep -q '"sarkar-local-agent"' "$CLAUDE_DESKTOP_CONFIG"; then
-            echo -e "${YELLOW}⚠ sarkar-local-agent already configured in Claude Desktop${NC}"
+        # Check if deskmate already configured
+        if grep -q '"deskmate"' "$CLAUDE_DESKTOP_CONFIG"; then
+            echo -e "${YELLOW}⚠ deskmate already configured in Claude Desktop${NC}"
             echo "  Please manually update the config if needed."
         else
             # Add to existing config using Python (more reliable JSON handling)
@@ -475,7 +475,7 @@ with open(config_path, 'r') as f:
 if 'mcpServers' not in config:
     config['mcpServers'] = {}
 
-config['mcpServers']['sarkar-local-agent'] = {
+config['mcpServers']['deskmate'] = {
     "command": "$NODE_PATH",
     "args": ["$PROJECT_DIR/dist/index.js", "mcp"],
     "env": {
@@ -488,14 +488,14 @@ with open(config_path, 'w') as f:
 
 print("Config updated successfully")
 PYTHON_EOF
-            echo -e "${GREEN}✓ Added sarkar-local-agent to Claude Desktop config${NC}"
+            echo -e "${GREEN}✓ Added deskmate to Claude Desktop config${NC}"
         fi
     else
         # Create new config file
         cat > "$CLAUDE_DESKTOP_CONFIG" << EOF
 {
   "mcpServers": {
-    "sarkar-local-agent": {
+    "deskmate": {
       "command": "$NODE_PATH",
       "args": ["$PROJECT_DIR/dist/index.js", "mcp"],
       "env": {
@@ -550,7 +550,7 @@ if [ "$RUN_MODE" = "telegram" ] || [ "$RUN_MODE" = "both" ]; then
     echo "    launchctl unload $PLIST_PATH && launchctl load $PLIST_PATH"
     echo ""
     echo -e "  ${GREEN}Check status:${NC}"
-    echo "    launchctl list | grep sarkar-local-agent"
+    echo "    launchctl list | grep deskmate"
     echo ""
     echo -e "  ${GREEN}Restore default sleep settings:${NC}"
     echo "    sudo pmset -c sleep 1"

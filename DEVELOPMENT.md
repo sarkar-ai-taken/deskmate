@@ -1,11 +1,11 @@
 # Development Guide
 
-This document covers the architecture, local setup, and development workflow for Sarkar Local Agent.
+This document covers the architecture, local setup, and development workflow for Deskmate.
 
 ## Architecture
 
 ```
-sarkar-local-agent/
+deskmate/
 ├── src/
 │   ├── index.ts              # Entry point - mode selection (telegram/mcp/both)
 │   ├── telegram/
@@ -48,7 +48,7 @@ Implements the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) 
 **How MCP works:**
 ```
 ┌─────────────────┐                    ┌─────────────────┐
-│ Claude Desktop  │                    │ sarkar-local-agent │
+│ Claude Desktop  │                    │ deskmate │
 │ (MCP Client)    │                    │ (MCP Server)    │
 │                 │   stdio transport  │                 │
 │  "List files"   │ ─────────────────▶ │ list_directory  │
@@ -107,8 +107,8 @@ curl -fsSL https://claude.ai/install.sh | bash
 
 ```bash
 # Clone and install
-git clone https://github.com/sarkar-ai-taken/sarkar-local-agent.git
-cd sarkar-local-agent
+git clone https://github.com/deskmate-ai/deskmate.git
+cd deskmate
 npm install --legacy-peer-deps
 
 # Configure
@@ -207,6 +207,72 @@ log.debug("Detailed info", { data });
 log.error("Something failed", { error: err.message });
 ```
 
+### Adding a new Agent Provider
+
+The project uses an abstracted agent system. To add a new AI backend:
+
+1. **Create the provider file** in `src/core/agent/providers/`:
+
+```typescript
+// src/core/agent/providers/my-provider.ts
+import {
+  AgentProvider,
+  AgentResponse,
+  AgentStreamEvent,
+  AgentQueryOptions,
+} from "../types";
+
+export class MyProvider implements AgentProvider {
+  readonly name = "my-provider";
+  readonly version = "1.0.0";
+
+  async query(prompt: string, options?: AgentQueryOptions): Promise<AgentResponse> {
+    // Implement non-streaming query
+  }
+
+  async *queryStream(
+    prompt: string,
+    options?: AgentQueryOptions
+  ): AsyncGenerator<AgentStreamEvent, void, unknown> {
+    // Implement streaming query
+    yield { type: "thinking" };
+
+    // Your AI logic here...
+
+    yield { type: "text", text: "Response text" };
+    yield { type: "done", response: { text: "Final response" } };
+  }
+
+  async isAvailable(): Promise<boolean> {
+    // Check if provider is configured correctly
+    return true;
+  }
+}
+```
+
+2. **Register the provider** in `src/core/agent/factory.ts`:
+
+```typescript
+import { MyProvider } from "./providers/my-provider";
+
+const providerRegistry: Map<AgentProviderType, new () => AgentProvider> = new Map([
+  ["claude-code", ClaudeCodeProvider],
+  ["my-provider", MyProvider],  // Add your provider
+]);
+```
+
+3. **Update types** if needed in `src/core/agent/types.ts`:
+
+```typescript
+export type AgentProviderType = "claude-code" | "my-provider" | ...;
+```
+
+4. **Use it** by setting the environment variable:
+
+```bash
+AGENT_PROVIDER=my-provider npm start
+```
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -214,9 +280,10 @@ log.error("Something failed", { error: err.message });
 | `TELEGRAM_BOT_TOKEN` | Yes | - | Telegram bot token |
 | `ALLOWED_USER_ID` | Yes | - | Authorized Telegram user ID |
 | `ANTHROPIC_API_KEY` | Yes | - | Anthropic API key |
+| `AGENT_PROVIDER` | No | `claude-code` | AI provider to use (claude-code, openai, ollama, etc.) |
 | `WORKING_DIR` | No | `$HOME` | Default working directory |
 | `LOG_LEVEL` | No | `info` | Logging verbosity |
-| `BOT_NAME` | No | `Sarkar Local Agent` | Bot display name |
+| `BOT_NAME` | No | `Deskmate` | Bot display name |
 | `ALLOWED_FOLDERS` | No | - | Colon-separated list of folders the agent can access |
 | `REQUIRE_APPROVAL_FOR_ALL` | No | `false` | Require Telegram approval for ALL operations |
 

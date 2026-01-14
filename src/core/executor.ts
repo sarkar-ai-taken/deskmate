@@ -2,12 +2,16 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as os from "os";
 import { createLogger } from "./logger";
 import { approvalManager } from "./approval";
 
 const log = createLogger("Executor");
 
 const execAsync = promisify(exec);
+
+// Screenshot directory
+const SCREENSHOT_DIR = path.join(os.tmpdir(), "deskmate-screenshots");
 
 export interface ExecutionResult {
   success: boolean;
@@ -179,5 +183,69 @@ export class Executor {
 
   setWorkingDir(dir: string): void {
     this.workingDir = dir;
+  }
+
+  async takeScreenshot(): Promise<string | null> {
+    try {
+      // Ensure screenshot directory exists
+      await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+
+      const filename = `screenshot-${Date.now()}.png`;
+      const filepath = path.join(SCREENSHOT_DIR, filename);
+
+      log.info("Taking screenshot", { filepath });
+
+      // Use screencapture on macOS (-x suppresses sound)
+      await execAsync(`screencapture -x "${filepath}"`, {
+        timeout: 10000,
+      });
+
+      // Verify file was created
+      await fs.access(filepath);
+      log.info("Screenshot saved", { filepath });
+
+      return filepath;
+    } catch (error: any) {
+      log.error("Screenshot failed", { error: error.message });
+      return null;
+    }
+  }
+
+  async getRecentScreenshots(since: Date): Promise<string[]> {
+    try {
+      await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+      const files = await fs.readdir(SCREENSHOT_DIR);
+      const screenshots: string[] = [];
+
+      for (const file of files) {
+        if (!file.endsWith(".png")) continue;
+        const filepath = path.join(SCREENSHOT_DIR, file);
+        const stats = await fs.stat(filepath);
+        if (stats.mtime >= since) {
+          screenshots.push(filepath);
+        }
+      }
+
+      return screenshots.sort();
+    } catch {
+      return [];
+    }
+  }
+
+  async cleanupScreenshots(): Promise<void> {
+    try {
+      const files = await fs.readdir(SCREENSHOT_DIR);
+      for (const file of files) {
+        if (file.endsWith(".png")) {
+          await fs.unlink(path.join(SCREENSHOT_DIR, file)).catch(() => {});
+        }
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
+  getScreenshotDir(): string {
+    return SCREENSHOT_DIR;
   }
 }

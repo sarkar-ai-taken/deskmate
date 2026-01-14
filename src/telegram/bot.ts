@@ -1,23 +1,31 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { Executor } from "../core/executor";
 import { approvalManager, PendingAction } from "../core/approval";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { createAgentProvider, AgentProvider } from "../core/agent";
 import { createLogger } from "../core/logger";
 
 const log = createLogger("TelegramBot");
 
-const BOT_NAME = process.env.BOT_NAME || "Sarkar Local Agent";
+const BOT_NAME = process.env.BOT_NAME || "Deskmate";
+
+const SCREENSHOT_DIR = process.env.TMPDIR ? `${process.env.TMPDIR}deskmate-screenshots` : "/tmp/deskmate-screenshots";
 
 const SYSTEM_PROMPT = `You are a local machine assistant named ${BOT_NAME}. Users will ask you to perform tasks on their computer via Telegram.
 
 You have access to tools to execute commands, read/write files, and explore the filesystem. Use them to help users accomplish their tasks.
+
+SCREENSHOT CAPABILITY:
+When the user asks to see the screen, take a screenshot, or wants visual feedback, use this command:
+  mkdir -p ${SCREENSHOT_DIR} && screencapture -x ${SCREENSHOT_DIR}/screenshot-$(date +%s).png && echo "Screenshot saved"
+The screenshot will automatically be sent to the user via Telegram after your response.
 
 IMPORTANT RULES:
 - Be concise in your responses (Telegram messages should be brief)
 - Use the available tools to accomplish tasks
 - For dangerous operations, explain what you're about to do before doing it
 - Never use sudo unless explicitly asked
-- Keep responses under 4000 characters (Telegram limit)`;
+- Keep responses under 4000 characters (Telegram limit)
+- When asked for screenshots, always use the screencapture command above`;
 
 export async function startTelegramBot(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -30,6 +38,16 @@ export async function startTelegramBot(): Promise<void> {
   const bot = new Bot(token);
   const executor = new Executor();
   const workingDir = process.env.WORKING_DIR || process.env.HOME || "/";
+
+  // Create the agent provider (abstracted - can be swapped)
+  const agentProvider: AgentProvider = createAgentProvider();
+  log.info("Using agent provider", { name: agentProvider.name, version: agentProvider.version });
+
+  // Verify provider is available
+  const providerAvailable = await agentProvider.isAvailable();
+  if (!providerAvailable) {
+    log.warn("Agent provider may not be fully available", { provider: agentProvider.name });
+  }
 
   // Store session IDs per chat for context/memory
   const chatSessions = new Map<number, string>();
@@ -103,13 +121,45 @@ export async function startTelegramBot(): Promise<void> {
         "*Examples:*\n" +
         "• `list all docker containers`\n" +
         "• `what's using port 3000?`\n" +
-        "• `show disk usage`\n\n" +
+        "• `show disk usage`\n" +
+        "• `take a screenshot`\n\n" +
         "*Commands:*\n" +
+        "• /screenshot - Take a screenshot\n" +
         "• /status - System info\n" +
         "• /reset - Clear memory & start fresh",
       { parse_mode: "Markdown" }
     )
   );
+
+  // Quick screenshot command
+  bot.command("screenshot", async (ctx) => {
+    const chatId = ctx.chat.id;
+    await ctx.reply("📸 Taking screenshot...");
+
+    try {
+      const { exec } = await import("child_process");
+      const { promisify } = await import("util");
+      const fs = await import("fs/promises");
+      const path = await import("path");
+      const execAsync = promisify(exec);
+
+      await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+      const filename = `screenshot-${Date.now()}.png`;
+      const filepath = path.join(SCREENSHOT_DIR, filename);
+
+      await execAsync(`screencapture -x "${filepath}"`);
+
+      await bot.api.sendPhoto(chatId, new InputFile(filepath), {
+        caption: "📸 Screenshot",
+      });
+
+      await fs.unlink(filepath).catch(() => {});
+      log.info("Screenshot command completed", { chatId });
+    } catch (error: any) {
+      log.error("Screenshot command failed", { error: error.message });
+      await ctx.reply(`❌ Screenshot failed: ${error.message}`);
+    }
+  });
 
   bot.command("status", async (ctx) => {
     const pending = approvalManager.getPendingActions();
@@ -119,6 +169,7 @@ export async function startTelegramBot(): Promise<void> {
       `🖥️ *System Status*\n\n` +
         `• Host: ${info.hostname || "unknown"}\n` +
         `• Platform: ${info.platform}\n` +
+        `• Agent: ${agentProvider.name} v${agentProvider.version}\n` +
         `• Pending approvals: ${pending.length}\n` +
         `• Working dir: \`${executor.getWorkingDir()}\`\n` +
         `• Session active: ${hasSession ? "Yes ✅" : "No"}`,
@@ -156,11 +207,45 @@ export async function startTelegramBot(): Promise<void> {
     await ctx.editMessageText("❌ *Rejected*", { parse_mode: "Markdown" });
   });
 
-  // Main message handler - use Claude Agent SDK with sessions
+  // Helper to send screenshots
+  async function sendScreenshots(chatId: number, since: Date): Promise<number> {
+    try {
+      const fs = await import("fs/promises");
+      const path = await import("path");
+
+      await fs.mkdir(SCREENSHOT_DIR, { recursive: true }).catch(() => {});
+      const files = await fs.readdir(SCREENSHOT_DIR).catch(() => [] as string[]);
+      let sent = 0;
+
+      for (const file of files) {
+        if (!file.endsWith(".png")) continue;
+        const filepath = path.join(SCREENSHOT_DIR, file);
+        const stats = await fs.stat(filepath).catch(() => null);
+        if (stats && stats.mtime >= since) {
+          log.info("Sending screenshot", { filepath });
+          await bot.api.sendPhoto(chatId, new InputFile(filepath), {
+            caption: "📸 Screenshot",
+          });
+          // Clean up after sending
+          await fs.unlink(filepath).catch(() => {});
+          sent++;
+        }
+      }
+      return sent;
+    } catch (error: any) {
+      log.error("Failed to send screenshots", { error: error.message });
+      return 0;
+    }
+  }
+
+  // Main message handler - uses abstract agent provider
   bot.on("message:text", async (ctx) => {
     const userMessage = ctx.message.text;
     const chatId = ctx.chat.id;
     const thinkingMsg = await ctx.reply("🤔 Thinking...");
+
+    // Record time before execution for screenshot detection
+    const executionStartTime = new Date();
 
     // Get existing session for this chat (if any)
     const existingSessionId = chatSessions.get(chatId);
@@ -176,49 +261,35 @@ export async function startTelegramBot(): Promise<void> {
       let lastUpdate = Date.now();
       let newSessionId: string | undefined;
 
-      // Build query options - resume if we have an existing session
-      const queryOptions: any = {
+      // Use the abstract agent provider
+      for await (const event of agentProvider.queryStream(userMessage, {
         systemPrompt: SYSTEM_PROMPT,
-        cwd: workingDir,
-        allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
-        permissionMode: "bypassPermissions",
+        workingDir,
+        sessionId: existingSessionId,
         maxTurns: 10,
-      };
-
-      // If we have an existing session, resume it
-      if (existingSessionId) {
-        queryOptions.resume = existingSessionId;
-        log.debug("Resuming session", { sessionId: existingSessionId });
-      }
-
-      // Use Claude Agent SDK to process the request
-      for await (const message of query({
-        prompt: userMessage,
-        options: queryOptions,
       })) {
-        log.debug("Agent message", { type: message.type, subtype: (message as any).subtype });
+        log.debug("Agent event", { type: event.type });
 
-        // Capture session ID from init message
-        if (message.type === "system" && (message as any).subtype === "init") {
-          newSessionId = (message as any).session_id;
-          log.debug("Got session ID", { sessionId: newSessionId });
-        }
-
-        // Collect the final result
-        if ("result" in message && message.result) {
-          result = message.result;
-        }
-
-        // Handle assistant text messages
-        if (message.type === "assistant" && "content" in message) {
-          const content = message.content;
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block.type === "text" && block.text) {
-                result = block.text;
-              }
+        switch (event.type) {
+          case "text":
+            if (event.text) {
+              result = event.text;
             }
-          }
+            break;
+
+          case "tool_use":
+            log.debug("Tool use", { tool: event.toolName });
+            break;
+
+          case "done":
+            if (event.response) {
+              result = event.response.text;
+              newSessionId = event.response.sessionId;
+            }
+            break;
+
+          case "error":
+            throw new Error(event.error || "Unknown agent error");
         }
 
         // Update thinking message periodically to show progress
@@ -250,6 +321,12 @@ export async function startTelegramBot(): Promise<void> {
         // If Markdown fails, try without
         await ctx.api.editMessageText(chatId, thinkingMsg.message_id, truncated);
       });
+
+      // Check for and send any screenshots taken during execution
+      const screenshotsSent = await sendScreenshots(chatId, executionStartTime);
+      if (screenshotsSent > 0) {
+        log.info("Screenshots sent", { count: screenshotsSent });
+      }
     } catch (error: any) {
       log.error("Agent error", { error: error.message });
       // If session error, clear the session and retry might help
@@ -268,6 +345,6 @@ export async function startTelegramBot(): Promise<void> {
   // Start polling
   console.log("🤖 Starting Telegram bot...");
   bot.start({
-    onStart: (info) => console.log(`✅ Telegram bot @${info.username} running`),
+    onStart: (info) => console.log(`✅ Telegram bot @${info.username} running (${agentProvider.name})`),
   });
 }

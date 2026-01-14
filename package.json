@@ -1,30 +1,32 @@
 {
-  "name": "sarkar-local-agent",
+  "name": "deskmate",
   "version": "1.0.0",
-  "description": "Control your Mac from anywhere using natural language via Telegram or MCP. Powered by Claude Agent SDK.",
-  "author": "Sarkar Local Agent Contributors",
+  "description": "Control your Mac from anywhere using natural language via Telegram or MCP.",
+  "author": "Deskmate Contributors",
   "license": "MIT",
-  "homepage": "https://github.com/sarkar-ai-taken/sarkar-local-agent#readme",
+  "homepage": "https://github.com/deskmate-ai/deskmate#readme",
   "bugs": {
-    "url": "https://github.com/sarkar-ai-taken/sarkar-local-agent/issues"
+    "url": "https://github.com/deskmate-ai/deskmate/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sarkar-ai-taken/sarkar-local-agent.git"
+    "url": "git+https://github.com/deskmate-ai/deskmate.git"
   },
   "keywords": [
     "telegram",
     "bot",
-    "claude",
+    "ai",
     "agent",
     "remote",
     "macos",
     "mcp",
-    "automation"
+    "automation",
+    "desktop",
+    "control"
   ],
   "main": "dist/index.js",
   "bin": {
-    "sarkar-local-agent": "./dist/index.js"
+    "deskmate": "./dist/index.js"
   },
   "engines": {
     "node": ">=18.0.0"
