@@ -1,0 +1,11 @@
+# Default owners for everything in the repo
+* @sarkarsaurabh27
+
+# Telegram bot
+/src/telegram/ @sarkarsaurabh27
+
+# MCP server
+/src/mcp/ @sarkarsaurabh27
+
+# Core utilities
+/src/core/ @sarkarsaurabh27
