@@ -1,0 +1,54 @@
+{
+  "name": "sarkar-local-agent",
+  "version": "1.0.0",
+  "description": "Control your Mac from anywhere using natural language via Telegram or MCP. Powered by Claude Agent SDK.",
+  "author": "Sarkar Local Agent Contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/sarkar-ai-taken/sarkar-local-agent#readme",
+  "bugs": {
+    "url": "https://github.com/sarkar-ai-taken/sarkar-local-agent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sarkar-ai-taken/sarkar-local-agent.git"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "claude",
+    "agent",
+    "remote",
+    "macos",
+    "mcp",
+    "automation"
+  ],
+  "main": "dist/index.js",
+  "bin": {
+    "sarkar-local-agent": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js telegram",
+    "start:telegram": "node dist/index.js telegram",
+    "start:mcp": "node dist/index.js mcp",
+    "start:both": "node dist/index.js both",
+    "dev": "tsx src/index.ts telegram",
+    "dev:mcp": "tsx src/index.ts mcp"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.6",
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.3.1",
+    "grammy": "^1.21.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
