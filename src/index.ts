@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 const mode = process.argv[2] || "telegram";
-const BOT_NAME = process.env.BOT_NAME || "Sarkar Local Agent";
+const BOT_NAME = process.env.BOT_NAME || "Deskmate";
 
 async function main() {
   console.log(`🚀 Starting ${BOT_NAME} in ${mode} mode...`);

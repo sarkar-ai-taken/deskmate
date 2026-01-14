@@ -138,7 +138,7 @@ if [ "$SETUP_PERMISSIONS" = "y" ] || [ "$SETUP_PERMISSIONS" = "Y" ]; then
     if [ "$OPEN_LOGIN" = "y" ] || [ "$OPEN_LOGIN" = "Y" ]; then
         echo -e "   ${YELLOW}Opening System Settings > General > Login Items...${NC}"
         open "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
-        echo -e "   ${GREEN}Ensure 'deskmate' is enabled under 'Allow in the Background'${NC}"
+        echo -e "   ${GREEN}Ensure 'node' is enabled under 'Allow in the Background'${NC}"
         read -p "   Press Enter when done..."
     fi
 
