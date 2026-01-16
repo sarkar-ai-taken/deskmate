@@ -6,6 +6,16 @@ Control your Mac from anywhere using natural language via Telegram or MCP.
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#requirements)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-green.svg)](#requirements)
 
+## Demo
+
+### Telegram Conversation
+<!-- Telegram chat demo video -->
+https://github.com/user-attachments/assets/deskmate-tg.mp4
+
+### Installation
+<!-- Installation walkthrough video -->
+https://github.com/user-attachments/assets/deskmate-install.mp4
+
 ## What is this?
 
 Deskmate lets you control your Mac remotely through two interfaces:
@@ -170,6 +180,10 @@ Open Telegram, find your bot, and send `/start`.
 **Visual:**
 - "Take a screenshot"
 - "Show me what's on the screen"
+
+| Taking a Screenshot | Opening Google Meet |
+|:---:|:---:|
+| ![Screenshot Demo](assets/deskmate-screenshot.jpeg) | ![Google Meet Demo](assets/deskmate-video-call.jpeg) |
 
 ## Running Modes
 
