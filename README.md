@@ -10,11 +10,11 @@ Control your Mac from anywhere using natural language via Telegram or MCP.
 
 ### Telegram Conversation
 <!-- Telegram chat demo video -->
-https://github.com/user-attachments/assets/deskmate-tg.mp4
+https://github.com/sarkar-ai-taken/deskmate/raw/main/assets/deskmate-tg.mp4
 
 ### Installation
 <!-- Installation walkthrough video -->
-https://github.com/user-attachments/assets/deskmate-install.mp4
+https://github.com/sarkar-ai-taken/deskmate/raw/main/assets/deskmate-install.mp4
 
 ## What is this?
 
