@@ -345,6 +345,7 @@ export async function startTelegramBot(): Promise<void> {
   // Start polling
   console.log("🤖 Starting Telegram bot...");
   bot.start({
+    drop_pending_updates: true,  // Don't process old updates on restart
     onStart: (info) => console.log(`✅ Telegram bot @${info.username} running (${agentProvider.name})`),
   });
 }
