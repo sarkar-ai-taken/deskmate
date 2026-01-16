@@ -6,6 +6,8 @@ Control your Mac from anywhere using natural language via Telegram or MCP.
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#requirements)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-green.svg)](#requirements)
 
+✨ Deskmate is a passion project developed under 𝘴𝘢𝘳𝘬𝘢𝘳.𝘢𝘪, born from a simple goal: staying in creative and developer flow even when I’m not sitting at my desk. Inspired by [gen-shell](https://github.com/sarkarsaurabh27/gen-shell).
+
 ## Demo
 
 ### Telegram Conversation
