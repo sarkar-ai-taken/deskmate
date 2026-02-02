@@ -8,7 +8,7 @@ Control your Local Machine from anywhere using natural language.
   <a href="#requirements"><img src="https://img.shields.io/badge/node-%3E%3D18-green.svg?style=for-the-badge" alt="Node"></a>
 </p>
 
-Deskmate is a personal AI assistant that runs on your personal machine and talks to you on the channels you already use. Send a Telegram message from your phone, and it executes on your machine. Powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/agent-sdk) with full local tool access — no sandboxed command set, no artificial limits.
+Deskmate is a local execution agent that lets you control your personal machine using natural language and talks to you on the channels you already use. Deskmate focuses on execution, not autonomy or orchestration. Send a Telegram message from your phone, and it executes on your machine. Powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/agent-sdk) with full local tool access — no sandboxed command set, no artificial limits.
 
 A passion project developed, born from a simple goal: staying in creative and developer flow even when I'm not sitting at my desk. Inspired by [gen-shell](https://github.com/sarkarsaurabh27/gen-shell).
 
@@ -17,6 +17,10 @@ A passion project developed, born from a simple goal: staying in creative and de
 ---
 
 ## Demo
+
+<p align="center">
+  <img src="assets/deskmate-screenshot.jpeg" alt="Deskmate Screenshot" width="500">
+</p>
 
 | Telegram Conversation | Installation |
 |:---:|:---:|
@@ -46,6 +50,17 @@ Telegram / Discord* / Slack* / ...
 *Discord and Slack adapters are planned — see [Adding a new client](#adding-a-new-client).
 
 The Gateway is the control plane. Each messaging platform is a thin I/O adapter. The agent has unrestricted access to your machine (approve-by-default), with optional approval gating for protected folders.
+
+## Responsibility Boundary
+
+Deskmate’s responsibility is **execution**.
+
+- It turns intent into concrete system actions
+- It does not coordinate other agents
+- It does not monitor agent health or resource usage
+
+If you want visibility into what agents are doing on your machine,
+see **Riva**, the local observability layer.
 
 ## Highlights
 
@@ -87,25 +102,34 @@ The installer guides you through these (macOS only). You can also configure them
 
 ## Quick Start
 
-### Install from npm (recommended for users)
+### Option A: Install from npm (recommended)
 
 ```bash
-npm install -g deskmate
+npm install -g @sarkar-ai/deskmate
 deskmate init
 ```
 
 The wizard walks you through everything: API keys, Telegram credentials,
-platform permissions, and background service setup.
+platform permissions, and background service setup. Config is stored in
+`~/.config/deskmate/.env`.
 
-### Install from source (for contributors)
+After setup, run manually with `deskmate` or let the background service handle it.
+
+### Option B: Install from source (for contributors)
 
 ```bash
 git clone https://github.com/sarkar-ai-taken/deskmate.git
 cd deskmate
 npm install --legacy-peer-deps
-cp .env.example .env  # edit with your credentials
 npm run build
-./install.sh          # or: npx deskmate init
+./install.sh          # interactive: configures .env, service, permissions
+```
+
+Or use the TypeScript wizard instead of the shell installer:
+
+```bash
+cp .env.example .env  # edit with your credentials
+npx deskmate init     # or: npm link && deskmate init
 ```
 
 To reconfigure later: `deskmate init`
@@ -114,29 +138,25 @@ To reconfigure later: `deskmate init`
 
 | Mode | Command | Description |
 |------|---------|-------------|
-| Telegram | `deskmate telegram` | Standalone Telegram bot (legacy) |
-| Gateway | `deskmate gateway` | Multi-client gateway (recommended for new setups) |
+| Gateway | `deskmate` | Multi-client gateway (default) |
 | MCP | `deskmate mcp` | MCP server for Claude Desktop |
-| Both | `deskmate both` | Telegram + MCP simultaneously |
+| Both | `deskmate both` | Gateway + MCP simultaneously |
+
+> **Note:** `deskmate telegram` still works but is a deprecated alias that starts the gateway.
 
 ## Gateway Mode
 
-The gateway is the recommended way to run Deskmate. It separates platform I/O from agent logic, so adding a new messaging client doesn't require touching auth, sessions, or the agent layer.
+The gateway is the default way to run Deskmate. It separates platform I/O from agent logic, so adding a new messaging client doesn't require touching auth, sessions, or the agent layer.
 
 ```bash
 # Configure multi-client auth
 ALLOWED_USERS=telegram:123456,discord:987654321
 
 # Start
-deskmate gateway
+deskmate
 ```
 
 The gateway auto-registers clients based on available env vars. If `TELEGRAM_BOT_TOKEN` is set, Telegram is active. Future clients (Discord, Slack) follow the same pattern.
-
-### Gateway vs Telegram mode
-
-- **`deskmate telegram`** — original standalone bot. Simple, self-contained, no gateway overhead. Good for single-user Telegram-only setups.
-- **`deskmate gateway`** — centralized architecture. Auth, sessions, and agent orchestration are shared. Required for multi-client setups and recommended for new installations.
 
 ## Bot Commands
 
@@ -187,31 +207,76 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 Restart Claude Desktop. You can now ask Claude to interact with your local machine.
 
-### Combined Mode (MCP + Telegram)
+### Combined Mode (Gateway + MCP)
 
-Run both with `deskmate both`. MCP handles Claude Desktop requests; Telegram sends approval notifications to your phone so you can approve sensitive operations from anywhere.
+Run both with `deskmate both`. MCP handles Claude Desktop requests; the gateway handles Telegram (and future clients), sending approval notifications to your phone so you can approve sensitive operations from anywhere.
+
+### Observability
+
+Deskmate focuses on executing actions safely.
+
+For monitoring agent behavior, resource usage, and failures across
+multiple local agents, see **Riva** (local-first agent observability).
 
 ## Security
 
 > **Important**: The agent can execute arbitrary commands on your machine. This is by design — the strategy is approve-by-default for read-only operations, with approval gating for protected folders and write operations.
 
-**Built-in protections:**
+### Built-in protections
 
 | Layer | What it does |
 |-------|-------------|
-| **User authentication** | Only allowlisted user IDs can interact (per-client) |
-| **Folder protection** | Desktop, Documents, Downloads, etc. require explicit approval |
-| **No sudo by default** | The agent won't use sudo unless you explicitly ask |
-| **No open ports** | The bot polls Telegram's servers, doesn't expose any ports |
-| **Structured logging** | All actions are logged with timestamps for audit |
-| **Session isolation** | Gateway sessions are keyed by `clientType:channelId` |
+| **User authentication** | Allowlist-based access control via `SecurityManager`. Only users in `ALLOWED_USERS` can interact. Supports per-client auth (`telegram:123`, `discord:456`) and wildcards (`*:*`). |
+| **Action approval** | `ApprovalManager` gates sensitive operations. Write commands, file writes, and folder access require explicit human approval with configurable timeouts (default 5 min). |
+| **Protected folders** | OS-aware folder protection. Desktop, Documents, Downloads, Pictures, Movies/Videos, Music, and iCloud (macOS) require approval. Session-based caching avoids repeated prompts. |
+| **Safe command auto-approval** | Read-only commands (`ls`, `cat`, `git status`, `docker ps`, `node -v`, etc.) auto-approve. Full list in `src/core/approval.ts`. |
+| **Command execution limits** | 2-minute timeout and 10 MB output buffer per command. Prevents runaway processes and memory exhaustion. |
+| **Session isolation** | Sessions keyed by `clientType:channelId`. 30-minute idle timeout with automatic pruning. Optional disk persistence survives restarts. |
+| **Input validation** | MCP tools use Zod schema validation. Telegram callbacks validated via regex patterns. |
+| **No open ports** | The bot polls Telegram's servers — no inbound ports exposed. |
+| **No sudo by default** | The agent won't use sudo unless you explicitly ask. |
+| **Structured logging** | All actions logged with timestamps, context hierarchy, and configurable log levels for audit trails. |
+| **Stale message protection** | Telegram client drops pending updates on startup (`drop_pending_updates: true`), preventing replay of messages received while offline. |
 
-**Recommendations:**
+### Approval workflow
+
+1. User sends a message that triggers a sensitive operation (e.g., writing to `~/Documents`)
+2. `ApprovalManager` checks if the action matches a safe auto-approve pattern
+3. If not safe, a pending approval is created with a timeout countdown
+4. Approval request is broadcast to all clients with recent activity (last 30 min)
+5. User taps Approve/Reject via inline buttons (Telegram) or equivalent
+6. Action executes on approval, or is cancelled on rejection/timeout
+
+Set `REQUIRE_APPROVAL_FOR_ALL=true` to gate every operation, including reads.
+
+### Recommendations
+
 - Set `WORKING_DIR` to limit default command scope
-- Use `ALLOWED_USERS` (gateway mode) for multi-client allowlisting
+- Use `ALLOWED_USERS` for multi-client allowlisting
+- Use `ALLOWED_FOLDERS` to pre-approve specific directories
 - Review logs regularly (`logs/stdout.log`)
 - Keep `.env` secure and never commit it
 - Use `REQUIRE_APPROVAL_FOR_ALL=true` if you want to approve every operation
+
+### Execution Philosophy
+
+Deskmate follows an **approve-by-default, visible-by-design** model.
+
+- Read-only operations are auto-approved
+- Sensitive operations require explicit confirmation
+- All actions are logged locally
+
+The goal is speed without hidden behavior.
+
+## Non-goals
+
+Deskmate is intentionally not:
+- A multi-agent orchestration framework
+- A cloud-hosted control plane
+- A long-running autonomous system
+- A monitoring or observability tool
+
+These constraints are deliberate.
 
 ## Architecture
 
@@ -233,8 +298,6 @@ src/
 │   └── session.ts                # Session manager (composite keys, idle pruning)
 ├── clients/
 │   └── telegram.ts               # Telegram adapter (grammY)
-├── telegram/
-│   └── bot.ts                    # Legacy standalone Telegram bot
 └── mcp/
     └── server.ts                 # MCP server
 ```
@@ -312,7 +375,7 @@ systemctl --user status deskmate.service
 
 **Bot not responding?**
 1. Check logs: `tail -f logs/stderr.log`
-2. Verify your `ALLOWED_USER_ID` matches your Telegram ID
+2. Verify your `ALLOWED_USERS` includes your Telegram ID (e.g. `telegram:123456`)
 3. Ensure Claude Code CLI is installed: `which claude`
 
 **Commands timing out?**
