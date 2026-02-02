@@ -1,8 +1,11 @@
+import * as path from "path";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { Executor } from "../core/executor";
 import { approvalManager, PendingAction } from "../core/approval";
 import { createAgentProvider, AgentProvider } from "../core/agent";
 import { createLogger } from "../core/logger";
+import { getScreenshotCommand, getScreenshotHint } from "../core/platform";
+import { SessionManager } from "../gateway/session";
 
 const log = createLogger("TelegramBot");
 
@@ -16,7 +19,7 @@ You have access to tools to execute commands, read/write files, and explore the 
 
 SCREENSHOT CAPABILITY:
 When the user asks to see the screen, take a screenshot, or wants visual feedback, use this command:
-  mkdir -p ${SCREENSHOT_DIR} && screencapture -x ${SCREENSHOT_DIR}/screenshot-$(date +%s).png && echo "Screenshot saved"
+  ${getScreenshotHint(SCREENSHOT_DIR)}
 The screenshot will automatically be sent to the user via Telegram after your response.
 
 IMPORTANT RULES:
@@ -25,7 +28,7 @@ IMPORTANT RULES:
 - For dangerous operations, explain what you're about to do before doing it
 - Never use sudo unless explicitly asked
 - Keep responses under 4000 characters (Telegram limit)
-- When asked for screenshots, always use the screencapture command above`;
+- When asked for screenshots, always use the screenshot command above`;
 
 export async function startTelegramBot(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -49,8 +52,10 @@ export async function startTelegramBot(): Promise<void> {
     log.warn("Agent provider may not be fully available", { provider: agentProvider.name });
   }
 
-  // Store session IDs per chat for context/memory
-  const chatSessions = new Map<number, string>();
+  // Store session IDs per chat for context/memory (persisted to disk)
+  const chatSessions = new SessionManager({
+    storagePath: path.join(workingDir, "data", "sessions-telegram.json"),
+  });
 
   // Register Telegram as an approval notifier
   approvalManager.addNotifier(async (action: PendingAction) => {
@@ -147,7 +152,7 @@ export async function startTelegramBot(): Promise<void> {
       const filename = `screenshot-${Date.now()}.png`;
       const filepath = path.join(SCREENSHOT_DIR, filename);
 
-      await execAsync(`screencapture -x "${filepath}"`);
+      await execAsync(getScreenshotCommand(filepath));
 
       await bot.api.sendPhoto(chatId, new InputFile(filepath), {
         caption: "📸 Screenshot",
@@ -164,7 +169,7 @@ export async function startTelegramBot(): Promise<void> {
   bot.command("status", async (ctx) => {
     const pending = approvalManager.getPendingActions();
     const info = await executor.getSystemInfo();
-    const hasSession = chatSessions.has(ctx.chat.id);
+    const hasSession = chatSessions.has("telegram", String(ctx.chat.id));
     await ctx.reply(
       `🖥️ *System Status*\n\n` +
         `• Host: ${info.hostname || "unknown"}\n` +
@@ -180,8 +185,8 @@ export async function startTelegramBot(): Promise<void> {
   // Reset session - start fresh conversation
   bot.command("reset", async (ctx) => {
     const chatId = ctx.chat.id;
-    const hadSession = chatSessions.has(chatId);
-    chatSessions.delete(chatId);
+    const hadSession = chatSessions.has("telegram", String(chatId));
+    chatSessions.delete("telegram", String(chatId));
     log.info("Session reset", { chatId, hadSession });
     await ctx.reply(
       hadSession
@@ -248,7 +253,7 @@ export async function startTelegramBot(): Promise<void> {
     const executionStartTime = new Date();
 
     // Get existing session for this chat (if any)
-    const existingSessionId = chatSessions.get(chatId);
+    const existingSessionId = chatSessions.get("telegram", String(chatId));
     log.info("Received message", {
       userId: ctx.from?.id,
       chatId,
@@ -305,7 +310,7 @@ export async function startTelegramBot(): Promise<void> {
 
       // Store the session ID for future messages
       if (newSessionId) {
-        chatSessions.set(chatId, newSessionId);
+        chatSessions.set("telegram", String(chatId), newSessionId);
         log.info("Session stored", { chatId, sessionId: newSessionId });
       }
 
@@ -331,7 +336,7 @@ export async function startTelegramBot(): Promise<void> {
       log.error("Agent error", { error: error.message });
       // If session error, clear the session and retry might help
       if (error.message?.includes("session")) {
-        chatSessions.delete(chatId);
+        chatSessions.delete("telegram", String(chatId));
         log.warn("Cleared invalid session", { chatId });
       }
       await ctx.api.editMessageText(

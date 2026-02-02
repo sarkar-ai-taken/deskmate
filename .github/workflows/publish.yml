@@ -1,25 +1,22 @@
-name: CI
+name: Publish to npm
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ['v*']
 
 jobs:
-  build-and-test:
+  publish:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [18, 20]
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 20
+          registry-url: https://registry.npmjs.org
           cache: 'npm'
       - run: npm install --legacy-peer-deps
       - run: npm run build
-      - run: npx tsc --noEmit
       - run: npm test
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

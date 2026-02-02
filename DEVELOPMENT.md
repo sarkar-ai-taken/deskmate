@@ -7,19 +7,37 @@ This document covers the architecture, local setup, and development workflow for
 ```
 deskmate/
 ├── src/
-│   ├── index.ts              # Entry point - mode selection (telegram/mcp/both)
+│   ├── index.ts              # Entry point - mode selection (telegram/mcp/both/gateway)
+│   ├── cli.ts                # CLI entry point (deskmate command)
+│   ├── cli/
+│   │   └── init.ts           # Interactive setup wizard (deskmate init)
+│   ├── gateway/
+│   │   ├── gateway.ts        # Central coordinator
+│   │   ├── security.ts       # Multi-client allowlist auth
+│   │   ├── session.ts        # Session manager (composite keys, idle pruning)
+│   │   ├── types.ts          # MessagingClient, MessageHandler interfaces
+│   │   └── index.ts          # Gateway barrel export
+│   ├── clients/
+│   │   └── telegram.ts       # Telegram adapter (grammY) for gateway
 │   ├── telegram/
-│   │   └── bot.ts            # Telegram bot using Claude Agent SDK
+│   │   └── bot.ts            # Legacy standalone Telegram bot
 │   ├── mcp/
 │   │   └── server.ts         # MCP server for Claude Desktop
 │   └── core/
+│       ├── agent/
+│       │   ├── types.ts      # AgentProvider interface
+│       │   ├── factory.ts    # Provider factory + registerProvider()
+│       │   ├── index.ts      # Agent barrel export
+│       │   └── providers/
+│       │       └── claude-code.ts  # Claude Code SDK (default)
+│       ├── platform.ts       # Cross-platform helpers (screenshots, protected folders)
 │       ├── executor.ts       # Command/file execution utilities
 │       ├── approval.ts       # Approval workflow manager
 │       └── logger.ts         # Structured logging utility
 ├── dist/                     # Compiled JavaScript (generated)
 ├── logs/                     # Runtime logs (generated)
-├── install.sh                # macOS service installer
-├── uninstall.sh              # macOS service uninstaller
+├── install.sh                # Cross-platform service installer (alternative to deskmate init)
+├── uninstall.sh              # Cross-platform service uninstaller
 └── .env                      # Configuration (not committed)
 ```
 
@@ -97,7 +115,12 @@ Structured logging with configurable levels:
 
 ```bash
 # Install Node.js 18+
+# macOS
 brew install node
+# Linux (Debian/Ubuntu)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+# Windows — use WSL2, then follow the Linux instructions above
 
 # Install Claude Code CLI (required for Agent SDK)
 curl -fsSL https://claude.ai/install.sh | bash
@@ -328,5 +351,7 @@ npm run build
 2. Update CHANGELOG (if exists)
 3. Run full build: `npm run build`
 4. Test both Telegram and MCP modes
-5. Create git tag: `git tag v1.x.x`
-6. Push with tags: `git push --tags`
+5. Verify npm package: `npm pack` — inspect the tarball contents
+6. Publish to npm: `npm publish`
+7. Create git tag: `git tag v1.x.x`
+8. Push with tags: `git push --tags`

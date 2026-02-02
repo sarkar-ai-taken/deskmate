@@ -2,19 +2,20 @@
  * Agent Module
  *
  * Provides an abstraction layer for AI agent providers.
+ * Ships with claude-code as the default (and recommended) provider.
  *
  * Usage:
  *   import { createAgentProvider } from "./core/agent";
  *   const agent = createAgentProvider();
  *   const response = await agent.query("Hello");
  *
- * To add a new provider:
- *   1. Create a new file in ./providers/your-provider.ts
- *   2. Implement the AgentProvider interface
- *   3. Register it in ./factory.ts
+ * To add a custom provider:
+ *   1. Implement the AgentProvider interface
+ *   2. Call registerProvider("my-agent", MyProvider)
+ *   3. Set AGENT_PROVIDER=my-agent in .env
  *
  * Environment:
- *   AGENT_PROVIDER - Set to override default provider (e.g., "openai", "ollama")
+ *   AGENT_PROVIDER - Set to override default provider (default: "claude-code")
  */
 
 // Types
@@ -37,5 +38,5 @@ export {
   isProviderAvailable,
 } from "./factory";
 
-// Providers (for direct import if needed)
+// Built-in provider
 export { ClaudeCodeProvider } from "./providers/claude-code";

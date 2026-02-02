@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { createLogger } from "./logger";
+import { getProtectedFolderPatterns, extractBaseFolder } from "./platform";
 
 const log = createLogger("Approval");
 
@@ -13,16 +14,8 @@ export interface PendingAction {
   resolve: (approved: boolean) => void;
 }
 
-// Protected folders that require approval
-const PROTECTED_FOLDERS = [
-  /^\/Users\/[^/]+\/Desktop/,
-  /^\/Users\/[^/]+\/Documents/,
-  /^\/Users\/[^/]+\/Downloads/,
-  /^\/Users\/[^/]+\/Pictures/,
-  /^\/Users\/[^/]+\/Movies/,
-  /^\/Users\/[^/]+\/Music/,
-  /^\/Users\/[^/]+\/Library\/Mobile Documents/, // iCloud
-];
+// Protected folders that require approval (platform-aware)
+const PROTECTED_FOLDERS = getProtectedFolderPatterns();
 
 export type ApprovalNotifier = (action: PendingAction) => Promise<void>;
 
@@ -69,8 +62,7 @@ export class ApprovalManager extends EventEmitter {
     }
 
     // Extract the base protected folder from the path
-    const folderMatch = filePath.match(/^(\/Users\/[^/]+\/(Desktop|Documents|Downloads|Pictures|Movies|Music|Library\/Mobile Documents[^/]*))/);
-    const baseFolder = folderMatch ? folderMatch[1] : filePath;
+    const baseFolder = extractBaseFolder(filePath) || filePath;
 
     const approved = await this.requestApproval(
       "folder_access",

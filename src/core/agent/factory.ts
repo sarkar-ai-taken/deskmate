@@ -2,7 +2,8 @@
  * Agent Provider Factory
  *
  * Creates agent provider instances based on configuration.
- * Add new providers here as they are implemented.
+ * Ships with claude-code as the default provider.
+ * Users can register custom providers via registerProvider().
  */
 
 import {
@@ -15,13 +16,9 @@ import { createLogger } from "../logger";
 
 const log = createLogger("AgentFactory");
 
-// Registry of available providers
-const providerRegistry: Map<AgentProviderType, new () => AgentProvider> = new Map([
+// Registry of available providers — extensible via registerProvider()
+const providerRegistry = new Map<AgentProviderType, new () => AgentProvider>([
   ["claude-code", ClaudeCodeProvider],
-  // Add more providers here:
-  // ["openai", OpenAIProvider],
-  // ["anthropic-direct", AnthropicDirectProvider],
-  // ["ollama", OllamaProvider],
 ]);
 
 /**
@@ -54,7 +51,6 @@ export function getDefaultProviderType(): AgentProviderType {
     return envProvider;
   }
 
-  // Default to claude-code
   return "claude-code";
 }
 
@@ -66,7 +62,11 @@ export function getAvailableProviders(): AgentProviderType[] {
 }
 
 /**
- * Register a custom provider
+ * Register a custom agent provider.
+ *
+ * Example:
+ *   registerProvider("my-agent", MyAgentProvider);
+ *   // then set AGENT_PROVIDER=my-agent in .env
  */
 export function registerProvider(
   type: AgentProviderType,

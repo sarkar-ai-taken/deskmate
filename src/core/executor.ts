@@ -5,6 +5,7 @@ import * as path from "path";
 import * as os from "os";
 import { createLogger } from "./logger";
 import { approvalManager } from "./approval";
+import { getScreenshotCommand } from "./platform";
 
 const log = createLogger("Executor");
 
@@ -195,8 +196,7 @@ export class Executor {
 
       log.info("Taking screenshot", { filepath });
 
-      // Use screencapture on macOS (-x suppresses sound)
-      await execAsync(`screencapture -x "${filepath}"`, {
+      await execAsync(getScreenshotCommand(filepath), {
         timeout: 10000,
       });
 

@@ -91,7 +91,8 @@ export interface AgentProvider {
   cleanup?(): Promise<void>;
 }
 
-export type AgentProviderType = "claude-code" | "openai" | "anthropic-direct" | "ollama" | "custom";
+/** Built-in type is "claude-code". Use registerProvider() to add custom types. */
+export type AgentProviderType = "claude-code" | (string & {});
 
 export interface AgentProviderConfig {
   /** The provider type to use */

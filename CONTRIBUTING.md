@@ -17,7 +17,7 @@ Thank you for your interest in contributing! This document provides guidelines a
    - Clear title describing the problem
    - Steps to reproduce
    - Expected vs actual behavior
-   - Environment details (macOS version, Node version)
+   - Environment details (macOS version / Linux distro / WSL2, Node version)
    - Relevant logs (with sensitive data removed)
 
 ### Suggesting Features
@@ -167,15 +167,27 @@ try {
 
 ```
 src/
-├── index.ts           # Entry point
-├── telegram/          # Telegram bot
+├── index.ts           # Entry point (mode selection)
+├── cli.ts             # CLI entry point (deskmate command)
+├── cli/
+│   └── init.ts        # Interactive setup wizard
+├── gateway/           # Multi-client gateway (coordinator, auth, sessions)
+├── clients/           # Platform adapters (Telegram, future Discord/Slack)
+├── telegram/          # Legacy standalone Telegram bot
 ├── mcp/               # MCP server
-└── core/              # Shared utilities
+└── core/
+    ├── agent/         # Agent abstraction layer (providers, factory)
+    ├── platform.ts    # Cross-platform helpers (screenshots, protected folders)
+    ├── executor.ts    # Command/file execution
+    ├── approval.ts    # Approval workflow
+    └── logger.ts      # Structured logging
 ```
 
 When adding new features:
+- **New messaging client** → `src/clients/` (implement `MessagingClient`)
 - **Telegram-specific** → `src/telegram/`
 - **MCP-specific** → `src/mcp/`
+- **Gateway logic** → `src/gateway/`
 - **Shared utilities** → `src/core/`
 
 ## Security Considerations
