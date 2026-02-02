@@ -1,6 +1,6 @@
 {
   "name": "@sarkar-ai/deskmate",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Control your local machine from anywhere using natural language via Telegram or MCP.",
   "author": "Deskmate Contributors",
   "license": "MIT",
@@ -62,7 +62,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^16.3.1",
     "grammy": "^1.21.1",
-    "zod": "^3.22.4"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
