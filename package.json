@@ -1,6 +1,6 @@
 {
   "name": "@sarkar-ai/deskmate",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Control your local machine from anywhere using natural language via Telegram or MCP.",
   "author": "Deskmate Contributors",
   "license": "MIT",
