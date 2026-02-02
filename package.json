@@ -47,12 +47,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js telegram",
-    "start:telegram": "node dist/index.js telegram",
+    "start": "node dist/index.js",
     "start:mcp": "node dist/index.js mcp",
     "start:gateway": "node dist/index.js gateway",
     "start:both": "node dist/index.js both",
-    "dev": "tsx src/index.ts telegram",
+    "dev": "tsx src/index.ts",
     "dev:mcp": "tsx src/index.ts mcp",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
@@ -60,6 +59,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.6",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@sarkar-ai/deskmate": "^0.2.1",
     "dotenv": "^16.3.1",
     "grammy": "^1.21.1",
     "zod": "^4.0.0"

@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 
-import "dotenv/config";
+import * as dotenv from "dotenv";
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import type { UserIdentity } from "./gateway/types";
+
+// Load .env: try cwd first (source install / service), then ~/.config/deskmate/ (npm global)
+const cwdEnv = path.join(process.cwd(), ".env");
+const configEnv = path.join(os.homedir(), ".config", "deskmate", ".env");
+
+if (fs.existsSync(cwdEnv)) {
+  dotenv.config({ path: cwdEnv });
+} else if (fs.existsSync(configEnv)) {
+  dotenv.config({ path: configEnv });
+}
 
 const pkg = JSON.parse(
   fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"),
@@ -19,10 +30,9 @@ Usage:
   deskmate <command> [options]
 
 Commands:
-  telegram    Start the Telegram bot (default)
+  (default)   Start the gateway (multi-client)
   mcp         Start the MCP server
-  both        Start both Telegram bot and MCP server
-  gateway     Start the multi-client gateway
+  both        Start gateway + MCP server
   init        Interactive setup wizard
 
 Options:
@@ -30,18 +40,17 @@ Options:
   -v, --version   Show version number
 
 Examples:
-  deskmate                  Start in Telegram mode
-  deskmate telegram         Start the Telegram bot
+  deskmate                  Start the gateway
   deskmate mcp              Start the MCP server
-  deskmate gateway          Start multi-client gateway
+  deskmate both             Start gateway + MCP
   deskmate init             Run the setup wizard
   deskmate --version        Print version
 
 Environment:
-  AGENT_PROVIDER            Agent provider (default: claude-code)
+  ALLOWED_USERS             Multi-client allowlist (e.g. telegram:123,discord:456)
   TELEGRAM_BOT_TOKEN        Telegram bot token
   ANTHROPIC_API_KEY         Anthropic API key
-  ALLOWED_USERS             Multi-client allowlist (e.g. telegram:123,discord:456)
+  AGENT_PROVIDER            Agent provider (default: claude-code)
 `);
 }
 
@@ -76,7 +85,7 @@ export function buildAllowedUsers(): UserIdentity[] {
 
 async function main() {
   const args = process.argv.slice(2);
-  const command = args.find((a) => !a.startsWith("-")) || "telegram";
+  const command = args.find((a) => !a.startsWith("-")) || "gateway";
   const flags = new Set(args.filter((a) => a.startsWith("-")));
 
   if (flags.has("--help") || flags.has("-h")) {
@@ -89,41 +98,21 @@ async function main() {
     process.exit(0);
   }
 
-  // If no explicit command and no .env found, suggest running init
+  // If no explicit command and no .env found anywhere, suggest running init
   if (
     !args.find((a) => !a.startsWith("-")) &&
-    !fs.existsSync(path.join(process.cwd(), ".env"))
+    !fs.existsSync(cwdEnv) &&
+    !fs.existsSync(configEnv)
   ) {
     console.log(`No .env file found. Run "deskmate init" to get started.\n`);
   }
 
   switch (command) {
-    case "telegram": {
-      console.log(`Starting ${BOT_NAME} in telegram mode...`);
-      const { startTelegramBot } = await import("./telegram/bot");
-      await startTelegramBot();
-      break;
-    }
-
-    case "mcp": {
-      console.log(`Starting ${BOT_NAME} in mcp mode...`);
-      const { startMcpServer } = await import("./mcp/server");
-      await startMcpServer();
-      break;
-    }
-
-    case "both": {
-      console.log(`Starting ${BOT_NAME} in both mode...`);
-      const [{ startTelegramBot: startBot }, { startMcpServer: startMcp }] =
-        await Promise.all([
-          import("./telegram/bot"),
-          import("./mcp/server"),
-        ]);
-      startBot().catch(console.error);
-      await startMcp();
-      break;
-    }
-
+    case "telegram":
+      console.warn(
+        '[deprecated] "deskmate telegram" is deprecated. The gateway is now the default. Starting gateway...',
+      );
+    // fall through
     case "gateway": {
       console.log(`Starting ${BOT_NAME} in gateway mode...`);
       const { Gateway } = await import("./gateway");
@@ -149,6 +138,43 @@ async function main() {
       }
 
       await gateway.start();
+      break;
+    }
+
+    case "mcp": {
+      console.log(`Starting ${BOT_NAME} in mcp mode...`);
+      const { startMcpServer } = await import("./mcp/server");
+      await startMcpServer();
+      break;
+    }
+
+    case "both": {
+      console.log(`Starting ${BOT_NAME} in gateway + mcp mode...`);
+      const { Gateway } = await import("./gateway");
+      const { TelegramClient } = await import("./clients/telegram");
+      const { startMcpServer } = await import("./mcp/server");
+
+      const allowedUsers = buildAllowedUsers();
+      if (allowedUsers.length === 0) {
+        console.error(
+          "No allowed users configured. Set ALLOWED_USERS or ALLOWED_USER_ID in your .env",
+        );
+        process.exit(1);
+      }
+
+      const gateway = new Gateway({
+        botName: BOT_NAME,
+        workingDir: process.env.WORKING_DIR || process.env.HOME || "/",
+        allowedUsers,
+        maxTurns: 10,
+      });
+
+      if (process.env.TELEGRAM_BOT_TOKEN) {
+        gateway.registerClient(new TelegramClient(process.env.TELEGRAM_BOT_TOKEN));
+      }
+
+      gateway.start().catch(console.error);
+      await startMcpServer();
       break;
     }
 

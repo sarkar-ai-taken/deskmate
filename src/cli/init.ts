@@ -1,10 +1,16 @@
 /**
  * Interactive Setup Wizard
  *
- * Self-contained setup: writes .env, optionally installs a background service
- * (launchd on macOS, systemd on Linux), and guides through macOS permissions.
+ * Supports two install paths:
+ *   1. npm global: `npm install -g @sarkar-ai/deskmate && deskmate init`
+ *      — config stored in ~/.config/deskmate/.env
+ *      — service uses the global `deskmate` binary
  *
- * For an alternative shell-based installer, see ./install.sh.
+ *   2. Source clone: `git clone ... && cd deskmate && deskmate init`  (or ./install.sh)
+ *      — config stored in project root .env
+ *      — service uses `node <projectDir>/dist/index.js`
+ *
+ * For an alternative shell-based installer (source path only), see ./install.sh.
  */
 
 import * as readline from "readline";
@@ -66,6 +72,84 @@ function detectPlatform(): Platform {
 }
 
 // ---------------------------------------------------------------------------
+// Install path detection
+// ---------------------------------------------------------------------------
+
+interface InstallPaths {
+  /** true if installed via npm global (inside node_modules) */
+  isGlobalInstall: boolean;
+  /** Directory where package.json lives */
+  packageDir: string;
+  /** Directory where .env and logs go */
+  configDir: string;
+  /** Path to the deskmate binary or node + index.js for service ExecStart */
+  execStart: (runMode: string) => string;
+}
+
+function resolveInstallPaths(): InstallPaths {
+  // dist/cli/init.js -> go up two levels to get package root
+  const packageDir = path.resolve(__dirname, "..", "..");
+  const isGlobal = __dirname.includes("node_modules");
+
+  if (isGlobal) {
+    const configDir = path.join(os.homedir(), ".config", "deskmate");
+    // Use the global deskmate binary (which is in PATH)
+    const deskmateCmd = process.argv[1] || "deskmate";
+    // Resolve to an absolute path so the service always finds it
+    let deskmateBin: string;
+    try {
+      deskmateBin = execSync("which deskmate", { encoding: "utf-8" }).trim();
+    } catch {
+      deskmateBin = deskmateCmd;
+    }
+    return {
+      isGlobalInstall: true,
+      packageDir,
+      configDir,
+      execStart: (runMode: string) => `${deskmateBin} ${runMode}`,
+    };
+  }
+
+  // Source install — configDir is the project root
+  return {
+    isGlobalInstall: false,
+    packageDir,
+    configDir: packageDir,
+    execStart: (runMode: string) =>
+      `${process.execPath} ${packageDir}/dist/index.js ${runMode}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// .env reader
+// ---------------------------------------------------------------------------
+
+async function loadExistingEnv(envPath: string): Promise<Record<string, string>> {
+  const existing: Record<string, string> = {};
+  try {
+    const content = await fs.readFile(envPath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx > 0) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        const value = trimmed.slice(eqIdx + 1).trim();
+        if (value) existing[key] = value;
+      }
+    }
+  } catch {
+    // file doesn't exist — fine
+  }
+  return existing;
+}
+
+function mask(value: string): string {
+  if (value.length <= 8) return "****";
+  return value.slice(0, 4) + "..." + value.slice(-4);
+}
+
+// ---------------------------------------------------------------------------
 // Service installation helpers
 // ---------------------------------------------------------------------------
 
@@ -84,11 +168,14 @@ function systemdPath(): string {
 }
 
 function buildPlist(
-  nodePath: string,
-  projectDir: string,
+  execStart: string,
+  workingDir: string,
   logsDir: string,
-  runMode: string,
 ): string {
+  // Split the execStart into program + arguments for ProgramArguments array
+  const parts = execStart.split(" ");
+  const argsXml = parts.map((p) => `        <string>${p}</string>`).join("\n");
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -98,13 +185,11 @@ function buildPlist(
 
     <key>ProgramArguments</key>
     <array>
-        <string>${nodePath}</string>
-        <string>${projectDir}/dist/index.js</string>
-        <string>${runMode}</string>
+${argsXml}
     </array>
 
     <key>WorkingDirectory</key>
-    <string>${projectDir}</string>
+    <string>${workingDir}</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -128,10 +213,9 @@ function buildPlist(
 }
 
 function buildSystemdUnit(
-  nodePath: string,
-  projectDir: string,
+  execStart: string,
+  workingDir: string,
   logsDir: string,
-  runMode: string,
 ): string {
   return `[Unit]
 Description=Deskmate - Local Machine Assistant
@@ -140,8 +224,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${nodePath} ${projectDir}/dist/index.js ${runMode}
-WorkingDirectory=${projectDir}
+ExecStart=${execStart}
+WorkingDirectory=${workingDir}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:${os.homedir()}/.local/bin
 Restart=always
 RestartSec=5
@@ -156,11 +240,10 @@ WantedBy=default.target`;
 }
 
 async function installMacosService(
-  projectDir: string,
+  execStart: string,
+  workingDir: string,
   logsDir: string,
-  runMode: string,
 ): Promise<void> {
-  const nodePath = process.execPath;
   const dest = plistPath();
 
   // Unload existing
@@ -175,7 +258,7 @@ async function installMacosService(
 
   await fs.mkdir(path.dirname(dest), { recursive: true });
   await fs.mkdir(logsDir, { recursive: true });
-  await fs.writeFile(dest, buildPlist(nodePath, projectDir, logsDir, runMode), "utf-8");
+  await fs.writeFile(dest, buildPlist(execStart, workingDir, logsDir), "utf-8");
 
   execSync(`launchctl load "${dest}"`);
   console.log("\n  Service installed and started via launchd.");
@@ -183,11 +266,10 @@ async function installMacosService(
 }
 
 async function installLinuxService(
-  projectDir: string,
+  execStart: string,
+  workingDir: string,
   logsDir: string,
-  runMode: string,
 ): Promise<void> {
-  const nodePath = process.execPath;
   const dest = systemdPath();
 
   // Stop existing
@@ -199,7 +281,7 @@ async function installLinuxService(
 
   await fs.mkdir(systemdDir(), { recursive: true });
   await fs.mkdir(logsDir, { recursive: true });
-  await fs.writeFile(dest, buildSystemdUnit(nodePath, projectDir, logsDir, runMode), "utf-8");
+  await fs.writeFile(dest, buildSystemdUnit(execStart, workingDir, logsDir), "utf-8");
 
   execSync("systemctl --user daemon-reload");
   execSync("systemctl --user enable deskmate.service");
@@ -312,41 +394,95 @@ export async function runInitWizard(): Promise<void> {
     console.log("");
   }
 
-  // ----- Step 1: .env wizard -----
+  // Detect install type and resolve paths
+  const paths = resolveInstallPaths();
 
-  const env: Record<string, string> = {};
-  env.AGENT_PROVIDER = "claude-code";
-
-  const apiKey = await ask(rl, "Anthropic API Key (for Claude Code): ");
-  if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
-
-  console.log("\n--- Telegram Configuration ---\n");
-  console.log("  Bot token → message @BotFather on Telegram, send /newbot");
-  console.log("  User ID   → message @userinfobot on Telegram, copy the number");
-  console.log("");
-
-  const token = await ask(rl, "Telegram Bot Token (from @BotFather): ");
-  if (token) env.TELEGRAM_BOT_TOKEN = token;
-
-  const userId = await ask(rl, "Your Telegram User ID (from @userinfobot): ");
-  if (userId) {
-    env.ALLOWED_USER_ID = userId;
-    env.ALLOWED_USERS = `telegram:${userId}`;
+  if (paths.isGlobalInstall) {
+    console.log(`Install type: npm global`);
+    console.log(`Config directory: ${paths.configDir}\n`);
+  } else {
+    console.log(`Install type: source`);
+    console.log(`Project directory: ${paths.packageDir}\n`);
   }
 
-  console.log("\n--- General Configuration ---\n");
-  const workingDir = await ask(
-    rl,
-    `Working directory (default: ${os.homedir()}): `,
-  );
-  if (workingDir) env.WORKING_DIR = workingDir;
+  // Ensure config directory exists
+  await fs.mkdir(paths.configDir, { recursive: true });
 
-  const botName = await ask(rl, "Bot name (default: Deskmate): ");
-  if (botName) env.BOT_NAME = botName;
+  // ----- Step 1: .env wizard -----
+
+  const envPath = path.join(paths.configDir, ".env");
+  const existing = await loadExistingEnv(envPath);
+  const hasExisting = Object.keys(existing).length > 0;
+
+  if (hasExisting) {
+    console.log("Found existing .env — values shown below. Press Enter to keep current value.\n");
+  }
+
+  const env: Record<string, string> = {};
+  env.AGENT_PROVIDER = existing.AGENT_PROVIDER || "claude-code";
+
+  // Anthropic API Key
+  if (existing.ANTHROPIC_API_KEY) {
+    const apiKey = await ask(rl, `Anthropic API Key [${mask(existing.ANTHROPIC_API_KEY)}]: `);
+    env.ANTHROPIC_API_KEY = apiKey || existing.ANTHROPIC_API_KEY;
+  } else {
+    const apiKey = await ask(rl, "Anthropic API Key (for Claude Code): ");
+    if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+  }
+
+  // Telegram
+  console.log("\n--- Telegram Configuration ---\n");
+  if (!existing.TELEGRAM_BOT_TOKEN) {
+    console.log("  Bot token → message @BotFather on Telegram, send /newbot");
+    console.log("  User ID   → message @userinfobot on Telegram, copy the number");
+    console.log("");
+  }
+
+  if (existing.TELEGRAM_BOT_TOKEN) {
+    const token = await ask(rl, `Telegram Bot Token [${mask(existing.TELEGRAM_BOT_TOKEN)}]: `);
+    env.TELEGRAM_BOT_TOKEN = token || existing.TELEGRAM_BOT_TOKEN;
+  } else {
+    const token = await ask(rl, "Telegram Bot Token (from @BotFather): ");
+    if (token) env.TELEGRAM_BOT_TOKEN = token;
+  }
+
+  // User ID / Allowed Users
+  const existingUsers = existing.ALLOWED_USERS;
+  const existingUserId = existing.ALLOWED_USER_ID;
+
+  if (existingUsers) {
+    const users = await ask(rl, `Allowed users [${existingUsers}]: `);
+    env.ALLOWED_USERS = users || existingUsers;
+  } else if (existingUserId) {
+    const userId = await ask(rl, `Telegram User ID [${existingUserId}]: `);
+    const id = userId || existingUserId;
+    env.ALLOWED_USER_ID = id;
+    env.ALLOWED_USERS = `telegram:${id}`;
+  } else {
+    const userId = await ask(rl, "Your Telegram User ID (from @userinfobot): ");
+    if (userId) {
+      env.ALLOWED_USER_ID = userId;
+      env.ALLOWED_USERS = `telegram:${userId}`;
+    }
+  }
+
+  // General config
+  console.log("\n--- General Configuration ---\n");
+
+  const defaultWorkingDir = existing.WORKING_DIR || os.homedir();
+  const workingDir = await ask(rl, `Working directory [${defaultWorkingDir}]: `);
+  env.WORKING_DIR = workingDir || defaultWorkingDir;
+
+  const defaultBotName = existing.BOT_NAME || "Deskmate";
+  const botName = await ask(rl, `Bot name [${defaultBotName}]: `);
+  env.BOT_NAME = botName || defaultBotName;
+
+  // Carry over other existing values that we don't prompt for
+  if (existing.LOG_LEVEL) env.LOG_LEVEL = existing.LOG_LEVEL;
+  if (existing.REQUIRE_APPROVAL_FOR_ALL) env.REQUIRE_APPROVAL_FOR_ALL = existing.REQUIRE_APPROVAL_FOR_ALL;
+  if (existing.ALLOWED_FOLDERS) env.ALLOWED_FOLDERS = existing.ALLOWED_FOLDERS;
 
   // ----- Step 2: Write .env -----
-
-  const envPath = path.join(process.cwd(), ".env");
 
   let envContent = "# Deskmate Configuration (generated by deskmate init)\n\n";
   for (const [key, value] of Object.entries(env)) {
@@ -357,20 +493,17 @@ export async function runInitWizard(): Promise<void> {
     envContent += "REQUIRE_APPROVAL_FOR_ALL=false\n";
 
   try {
-    let envExists = false;
-    try {
-      await fs.access(envPath);
-      envExists = true;
-    } catch {
-      // does not exist
-    }
-
-    if (envExists) {
-      console.log(`\nWARNING: .env file already exists at ${envPath}`);
-      const newPath = envPath + ".new";
-      await fs.writeFile(newPath, envContent, "utf-8");
-      console.log(`Configuration saved to ${newPath}`);
-      console.log("Review and rename it to .env when ready.");
+    if (hasExisting) {
+      const overwrite = await askYesNo(rl, "\nOverwrite existing .env with new values?");
+      if (overwrite) {
+        await fs.writeFile(envPath, envContent, "utf-8");
+        console.log(`Configuration saved to ${envPath}`);
+      } else {
+        const newPath = envPath + ".new";
+        await fs.writeFile(newPath, envContent, "utf-8");
+        console.log(`Configuration saved to ${newPath}`);
+        console.log("Review and rename it to .env when ready.");
+      }
     } else {
       await fs.writeFile(envPath, envContent, "utf-8");
       console.log(`\nConfiguration saved to ${envPath}`);
@@ -388,17 +521,15 @@ export async function runInitWizard(): Promise<void> {
     const installService = await askYesNo(rl, "Install as background service?");
 
     if (installService) {
-      // Determine project root (where package.json lives)
-      const projectDir = path.resolve(__dirname, "..");
-      const logsDir = path.join(projectDir, "logs");
-
+      const logsDir = path.join(paths.configDir, "logs");
       const runMode = "gateway";
+      const execStart = paths.execStart(runMode);
 
       try {
         if (platform === "macos") {
-          await installMacosService(projectDir, logsDir, runMode);
+          await installMacosService(execStart, paths.configDir, logsDir);
         } else {
-          await installLinuxService(projectDir, logsDir, runMode);
+          await installLinuxService(execStart, paths.configDir, logsDir);
         }
       } catch (err: any) {
         console.error(`\n  Failed to install service: ${err.message}`);
@@ -424,5 +555,9 @@ export async function runInitWizard(): Promise<void> {
   rl.close();
 
   console.log("\nSetup complete! Your bot is ready.");
+  if (paths.isGlobalInstall) {
+    console.log(`\nRun "deskmate" to start, or the background service is already running.`);
+    console.log(`Config: ${paths.configDir}/.env`);
+  }
   console.log("");
 }

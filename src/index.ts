@@ -1,7 +1,20 @@
-import "dotenv/config";
+import * as dotenv from "dotenv";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 import type { UserIdentity } from "./gateway/types";
 
-const mode = process.argv[2] || "telegram";
+// Load .env: try cwd first (source install / service), then ~/.config/deskmate/ (npm global)
+const cwdEnv = path.join(process.cwd(), ".env");
+const configEnv = path.join(os.homedir(), ".config", "deskmate", ".env");
+
+if (fs.existsSync(cwdEnv)) {
+  dotenv.config({ path: cwdEnv });
+} else if (fs.existsSync(configEnv)) {
+  dotenv.config({ path: configEnv });
+}
+
+const mode = process.argv[2] || "gateway";
 const BOT_NAME = process.env.BOT_NAME || "Deskmate";
 
 /** Parse ALLOWED_USERS (multi-client) and ALLOWED_USER_ID (legacy) into UserIdentity[] */
@@ -38,37 +51,14 @@ function buildAllowedUsers(): UserIdentity[] {
 }
 
 async function main() {
-  console.log(`🚀 Starting ${BOT_NAME} in ${mode} mode...`);
-
   switch (mode) {
     case "telegram":
-      // Telegram bot mode - natural language interface
-      const { startTelegramBot } = await import("./telegram/bot");
-      await startTelegramBot();
-      break;
-
-    case "mcp":
-      // MCP server mode - for Claude.ai / MCP clients
-      const { startMcpServer } = await import("./mcp/server");
-      await startMcpServer();
-      break;
-
-    case "both":
-      // Run both (MCP on stdio, Telegram in background)
-      console.log("Starting both Telegram bot and MCP server...");
-      const [{ startTelegramBot: startBot }, { startMcpServer: startMcp }] = await Promise.all([
-        import("./telegram/bot"),
-        import("./mcp/server"),
-      ]);
-
-      // Start Telegram in background (for approval notifications)
-      startBot().catch(console.error);
-
-      // Start MCP (this blocks on stdio)
-      await startMcp();
-      break;
-
+      console.warn(
+        '[deprecated] "telegram" mode is deprecated. The gateway is now the default. Starting gateway...',
+      );
+    // fall through
     case "gateway": {
+      console.log(`Starting ${BOT_NAME} in gateway mode...`);
       const { Gateway } = await import("./gateway");
       const { TelegramClient } = await import("./clients/telegram");
 
@@ -96,9 +86,46 @@ async function main() {
       break;
     }
 
+    case "mcp": {
+      console.log(`Starting ${BOT_NAME} in mcp mode...`);
+      const { startMcpServer } = await import("./mcp/server");
+      await startMcpServer();
+      break;
+    }
+
+    case "both": {
+      console.log(`Starting ${BOT_NAME} in gateway + mcp mode...`);
+      const { Gateway } = await import("./gateway");
+      const { TelegramClient } = await import("./clients/telegram");
+      const { startMcpServer } = await import("./mcp/server");
+
+      const allowedUsers = buildAllowedUsers();
+      if (allowedUsers.length === 0) {
+        throw new Error(
+          "No allowed users configured. Set ALLOWED_USERS or ALLOWED_USER_ID in your .env",
+        );
+      }
+
+      const gateway = new Gateway({
+        botName: BOT_NAME,
+        workingDir: process.env.WORKING_DIR || process.env.HOME || "/",
+        allowedUsers,
+        maxTurns: 10,
+      });
+
+      if (process.env.TELEGRAM_BOT_TOKEN) {
+        gateway.registerClient(new TelegramClient(process.env.TELEGRAM_BOT_TOKEN));
+      }
+
+      // Start gateway in background, MCP on stdio
+      gateway.start().catch(console.error);
+      await startMcpServer();
+      break;
+    }
+
     default:
       console.error(`Unknown mode: ${mode}`);
-      console.error("Usage: npm start [telegram|mcp|both|gateway]");
+      console.error("Usage: npm start [gateway|mcp|both]");
       process.exit(1);
   }
 }
@@ -110,11 +137,11 @@ main().catch((error) => {
 
 // Graceful shutdown
 process.on("SIGINT", () => {
-  console.log("\n👋 Shutting down...");
+  console.log("\nShutting down...");
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("\n👋 Shutting down...");
+  console.log("\nShutting down...");
   process.exit(0);
 });
