@@ -15,6 +15,7 @@
 
 import * as readline from "readline";
 import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
@@ -93,30 +94,55 @@ function resolveInstallPaths(): InstallPaths {
 
   if (isGlobal) {
     const configDir = path.join(os.homedir(), ".config", "deskmate");
-    // Use the global deskmate binary (which is in PATH)
-    const deskmateCmd = process.argv[1] || "deskmate";
-    // Resolve to an absolute path so the service always finds it
-    let deskmateBin: string;
+    // Create a hard link named "deskmate" → node so the OS-level process name
+    // reported by psutil / ps / top becomes "deskmate" instead of "node".
+    // Hard links are required on macOS — symlinks get resolved by the kernel.
+    const nodeBin = process.execPath;
+    const deskmateLink = path.join(configDir, "deskmate");
     try {
-      deskmateBin = execSync("which deskmate", { encoding: "utf-8" }).trim();
+      if (!fsSync.existsSync(configDir)) {
+        fsSync.mkdirSync(configDir, { recursive: true });
+      }
+      if (fsSync.existsSync(deskmateLink)) {
+        fsSync.unlinkSync(deskmateLink);
+      }
+      fsSync.linkSync(nodeBin, deskmateLink);
     } catch {
-      deskmateBin = deskmateCmd;
+      // Hard link failed — fall back to plain node
     }
+    const execBin = fsSync.existsSync(deskmateLink) ? deskmateLink : nodeBin;
+
     return {
       isGlobalInstall: true,
       packageDir,
       configDir,
-      execStart: (runMode: string) => `${deskmateBin} ${runMode}`,
+      execStart: (runMode: string) =>
+        `${execBin} ${packageDir}/dist/cli.js ${runMode}`,
     };
   }
 
   // Source install — configDir is the project root
+  // Create a hard link named "deskmate" → node so the OS-level process name
+  // reported by psutil / ps / top becomes "deskmate" instead of "node".
+  // Hard links are required on macOS — symlinks get resolved by the kernel.
+  const nodeBin = process.execPath;
+  const deskmateLink = path.join(packageDir, "dist", "deskmate");
+  try {
+    if (fsSync.existsSync(deskmateLink)) {
+      fsSync.unlinkSync(deskmateLink);
+    }
+    fsSync.linkSync(nodeBin, deskmateLink);
+  } catch {
+    // Hard link failed — fall back to plain node
+  }
+  const execBin = fsSync.existsSync(deskmateLink) ? deskmateLink : nodeBin;
+
   return {
     isGlobalInstall: false,
     packageDir,
     configDir: packageDir,
     execStart: (runMode: string) =>
-      `${process.execPath} ${packageDir}/dist/index.js ${runMode}`,
+      `${execBin} ${packageDir}/dist/index.js ${runMode}`,
   };
 }
 
