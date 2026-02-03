@@ -428,5 +428,5 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 If you find Deskmate useful, feel free to share:
 
-- [Share on X](https://x.com/intent/post?text=Running%20real%20system%20actions%20with%20a%20local-first%20AI%20agent.%20Deskmate%20lets%20you%20control%20your%20machine%20using%20natural%20language.&url=https%3A%2F%2Fgithub.com%2Fsarkar-ai%2Fdeskmate&via=sarkar_ai)
-- [Post to Hacker News](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fgithub.com%2Fsarkar-ai%2Fdeskmate&t=Deskmate%3A%20A%20local-first%20AI%20agent%20for%20executing%20real%20system%20actions)
+- [Share on X](https://x.com/intent/post?text=Running%20real%20system%20actions%20with%20a%20local-first%20AI%20agent.%20Deskmate%20lets%20you%20control%20your%20machine%20using%20natural%20language.&url=https%3A%2F%2Fgithub.com%2Fsarkar-ai-taken%2Fdeskmate&via=sarkar_ai)
+- [Post to Hacker News](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fgithub.com%2Fsarkar-ai-taken%2Fdeskmate&t=Deskmate%3A%20A%20local-first%20AI%20agent%20for%20executing%20real%20system%20actions)
