@@ -91,8 +91,8 @@ export interface AgentProvider {
   cleanup?(): Promise<void>;
 }
 
-/** Built-in type is "claude-code". Use registerProvider() to add custom types. */
-export type AgentProviderType = "claude-code" | (string & {});
+/** Built-in types. Use registerProvider() to add custom types. */
+export type AgentProviderType = "claude-code" | "codex" | "gemini" | "opencode" | (string & {});
 
 export interface AgentProviderConfig {
   /** The provider type to use */

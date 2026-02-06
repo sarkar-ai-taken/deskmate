@@ -36,23 +36,36 @@ Commands:
   mcp         Start the MCP server
   both        Start gateway + MCP server
   init        Interactive setup wizard
+  status      Show service status and config validation
+  logs        Tail service logs (--stderr for error log)
+  restart     Restart the background service
+  doctor      Run diagnostic checks
 
 Options:
   -h, --help      Show this help message
   -v, --version   Show version number
+  --no-tray       Disable the system tray icon
+  --stderr        (logs) Tail stderr.log instead of stdout.log
 
 Examples:
   deskmate                  Start the gateway
   deskmate mcp              Start the MCP server
   deskmate both             Start gateway + MCP
   deskmate init             Run the setup wizard
+  deskmate status           Check service status
+  deskmate logs             Tail stdout.log
+  deskmate logs --stderr    Tail stderr.log
+  deskmate restart          Restart the service
+  deskmate doctor           Run diagnostic checks
   deskmate --version        Print version
 
 Environment:
   ALLOWED_USERS             Multi-client allowlist (e.g. telegram:123,discord:456)
   TELEGRAM_BOT_TOKEN        Telegram bot token
-  ANTHROPIC_API_KEY         Anthropic API key
-  AGENT_PROVIDER            Agent provider (default: claude-code)
+  AGENT_PROVIDER            Agent provider: claude-code, codex, gemini, opencode (default: claude-code)
+  ANTHROPIC_API_KEY         API key for claude-code provider
+  OPENAI_API_KEY            API key for codex provider
+  GEMINI_API_KEY            API key for gemini provider
 `);
 }
 
@@ -100,6 +113,8 @@ async function main() {
     process.exit(0);
   }
 
+  const noTray = flags.has("--no-tray");
+
   // If no explicit command and no .env found anywhere, suggest running init
   if (
     !args.find((a) => !a.startsWith("-")) &&
@@ -140,6 +155,11 @@ async function main() {
       }
 
       await gateway.start();
+
+      if (!noTray) {
+        const { startTray } = await import("./cli/tray");
+        startTray(VERSION);
+      }
       break;
     }
 
@@ -176,6 +196,12 @@ async function main() {
       }
 
       gateway.start().catch(console.error);
+
+      if (!noTray) {
+        const { startTray } = await import("./cli/tray");
+        startTray(VERSION);
+      }
+
       await startMcpServer();
       break;
     }
@@ -184,6 +210,30 @@ async function main() {
     case "init": {
       const { runInitWizard } = await import("./cli/init");
       await runInitWizard();
+      break;
+    }
+
+    case "status": {
+      const { runStatus } = await import("./cli/ops");
+      await runStatus();
+      break;
+    }
+
+    case "logs": {
+      const { runLogs } = await import("./cli/ops");
+      await runLogs(flags);
+      break;
+    }
+
+    case "restart": {
+      const { runRestart } = await import("./cli/ops");
+      await runRestart();
+      break;
+    }
+
+    case "doctor": {
+      const { runDoctor } = await import("./cli/ops");
+      await runDoctor();
       break;
     }
 

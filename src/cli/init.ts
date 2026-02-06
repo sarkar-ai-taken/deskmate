@@ -48,18 +48,92 @@ async function askYesNo(
   return answer.toLowerCase() === "y";
 }
 
-async function checkClaudeCLI(): Promise<boolean> {
+function checkBinary(binary: string): boolean {
   try {
-    execSync("which claude", { stdio: "ignore" });
+    execSync(`which ${binary}`, { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
 }
 
-type Platform = "macos" | "linux" | "windows" | "unsupported";
+// ---------------------------------------------------------------------------
+// Provider metadata
+// ---------------------------------------------------------------------------
 
-function detectPlatform(): Platform {
+interface ProviderInfo {
+  label: string;
+  binary: string;
+  envKey?: string;        // API key env var (undefined = provider manages its own auth)
+  envPrompt?: string;     // prompt text for the API key
+  installUrl: string;
+}
+
+const PROVIDER_INFO: Record<string, ProviderInfo> = {
+  "claude-code": {
+    label: "Claude Code (Anthropic)",
+    binary: "claude",
+    envKey: "ANTHROPIC_API_KEY",
+    envPrompt: "Anthropic API Key",
+    installUrl: "https://docs.anthropic.com/en/docs/claude-code",
+  },
+  codex: {
+    label: "Codex (OpenAI)",
+    binary: "codex",
+    envKey: "OPENAI_API_KEY",
+    envPrompt: "OpenAI API Key",
+    installUrl: "https://github.com/openai/codex",
+  },
+  gemini: {
+    label: "Gemini CLI (Google)",
+    binary: "gemini",
+    envKey: "GEMINI_API_KEY",
+    envPrompt: "Gemini API Key",
+    installUrl: "https://github.com/google-gemini/gemini-cli",
+  },
+  opencode: {
+    label: "OpenCode",
+    binary: "opencode",
+    installUrl: "https://github.com/opencode-ai/opencode",
+  },
+};
+
+async function askProviderChoice(
+  rl: readline.Interface,
+  currentProvider: string,
+): Promise<string> {
+  const providers = Object.entries(PROVIDER_INFO);
+
+  console.log("\n--- Agent Provider ---\n");
+  for (let i = 0; i < providers.length; i++) {
+    const [key, info] = providers[i];
+    const installed = checkBinary(info.binary) ? "\x1b[32m(installed)\x1b[0m" : "\x1b[31m(not found)\x1b[0m";
+    const current = key === currentProvider ? " \x1b[36m<-- current\x1b[0m" : "";
+    console.log(`  ${i + 1}. ${info.label} ${installed}${current}`);
+  }
+  console.log("");
+
+  const answer = await ask(rl, `Choose provider [1-${providers.length}] (Enter to keep current): `);
+  if (!answer) return currentProvider;
+
+  const idx = parseInt(answer, 10) - 1;
+  if (idx >= 0 && idx < providers.length) {
+    const chosen = providers[idx][0];
+    const info = providers[idx][1];
+    if (!checkBinary(info.binary)) {
+      console.log(`\n  WARNING: '${info.binary}' CLI not found in PATH.`);
+      console.log(`  Install it from: ${info.installUrl}\n`);
+    }
+    return chosen;
+  }
+
+  console.log("  Invalid choice, keeping current provider.");
+  return currentProvider;
+}
+
+export type Platform = "macos" | "linux" | "windows" | "unsupported";
+
+export function detectPlatform(): Platform {
   switch (process.platform) {
     case "darwin":
       return "macos";
@@ -76,7 +150,7 @@ function detectPlatform(): Platform {
 // Install path detection
 // ---------------------------------------------------------------------------
 
-interface InstallPaths {
+export interface InstallPaths {
   /** true if installed via npm global (inside node_modules) */
   isGlobalInstall: boolean;
   /** Directory where package.json lives */
@@ -87,7 +161,7 @@ interface InstallPaths {
   execStart: (runMode: string) => string;
 }
 
-function resolveInstallPaths(): InstallPaths {
+export function resolveInstallPaths(): InstallPaths {
   // dist/cli/init.js -> go up two levels to get package root
   const packageDir = path.resolve(__dirname, "..", "..");
   const isGlobal = __dirname.includes("node_modules");
@@ -150,7 +224,7 @@ function resolveInstallPaths(): InstallPaths {
 // .env reader
 // ---------------------------------------------------------------------------
 
-async function loadExistingEnv(envPath: string): Promise<Record<string, string>> {
+export async function loadExistingEnv(envPath: string): Promise<Record<string, string>> {
   const existing: Record<string, string> = {};
   try {
     const content = await fs.readFile(envPath, "utf-8");
@@ -179,9 +253,9 @@ function mask(value: string): string {
 // Service installation helpers
 // ---------------------------------------------------------------------------
 
-const PLIST_NAME = "com.deskmate.service";
+export const PLIST_NAME = "com.deskmate.service";
 
-function plistPath(): string {
+export function plistPath(): string {
   return path.join(os.homedir(), "Library", "LaunchAgents", `${PLIST_NAME}.plist`);
 }
 
@@ -189,7 +263,7 @@ function systemdDir(): string {
   return path.join(os.homedir(), ".config", "systemd", "user");
 }
 
-function systemdPath(): string {
+export function systemdPath(): string {
   return path.join(systemdDir(), "deskmate.service");
 }
 
@@ -197,9 +271,12 @@ function buildPlist(
   execStart: string,
   workingDir: string,
   logsDir: string,
+  useCaffeinate = false,
 ): string {
   // Split the execStart into program + arguments for ProgramArguments array
-  const parts = execStart.split(" ");
+  const parts = useCaffeinate
+    ? ["/usr/bin/caffeinate", "-i", ...execStart.split(" ")]
+    : execStart.split(" ");
   const argsXml = parts.map((p) => `        <string>${p}</string>`).join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -269,6 +346,7 @@ async function installMacosService(
   execStart: string,
   workingDir: string,
   logsDir: string,
+  useCaffeinate = false,
 ): Promise<void> {
   const dest = plistPath();
 
@@ -284,10 +362,11 @@ async function installMacosService(
 
   await fs.mkdir(path.dirname(dest), { recursive: true });
   await fs.mkdir(logsDir, { recursive: true });
-  await fs.writeFile(dest, buildPlist(execStart, workingDir, logsDir), "utf-8");
+  await fs.writeFile(dest, buildPlist(execStart, workingDir, logsDir, useCaffeinate), "utf-8");
 
   execSync(`launchctl load "${dest}"`);
   console.log("\n  Service installed and started via launchd.");
+  if (useCaffeinate) console.log("  Caffeinate wrapper enabled.");
   console.log(`  Plist: ${dest}`);
 }
 
@@ -335,6 +414,7 @@ async function offerMacosPermissions(rl: readline.Interface): Promise<void> {
   console.log("    - Accessibility (system control)");
   console.log("    - Full Disk Access (read/write anywhere)");
   console.log("    - Automation (AppleScript)");
+  console.log("    - Background Items (login items)");
   console.log("");
 
   if (await askYesNo(rl, "Trigger Screen Recording permission dialog?")) {
@@ -367,6 +447,168 @@ async function offerMacosPermissions(rl: readline.Interface): Promise<void> {
     );
     await ask(rl, "  Press Enter when done...");
   }
+
+  if (await askYesNo(rl, "Open Login Items settings?")) {
+    execSync(
+      'open "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"',
+    );
+    console.log("  Ensure 'node' or 'deskmate' is enabled under 'Allow in the Background'");
+    await ask(rl, "  Press Enter when done...");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// macOS folder access helper
+// ---------------------------------------------------------------------------
+
+async function offerMacosFolderAccess(rl: readline.Interface): Promise<string> {
+  console.log("\n--- macOS Folder Access ---\n");
+  console.log("  macOS will ask for permission when the agent accesses protected folders.");
+  console.log("  Select folders to grant access (triggers macOS permission dialogs).\n");
+
+  const folders: string[] = [];
+  const home = os.homedir();
+
+  const folderChoices: Array<{ name: string; path: string; defaultYes: boolean }> = [
+    { name: "Desktop", path: path.join(home, "Desktop"), defaultYes: true },
+    { name: "Documents", path: path.join(home, "Documents"), defaultYes: true },
+    { name: "Downloads", path: path.join(home, "Downloads"), defaultYes: true },
+    { name: "Pictures", path: path.join(home, "Pictures"), defaultYes: false },
+    { name: "Movies", path: path.join(home, "Movies"), defaultYes: false },
+    { name: "Music", path: path.join(home, "Music"), defaultYes: false },
+  ];
+
+  // Check for iCloud Drive
+  const icloudPath = path.join(home, "Library", "Mobile Documents", "com~apple~CloudDocs");
+  if (fsSync.existsSync(icloudPath)) {
+    folderChoices.push({ name: "iCloud Drive", path: icloudPath, defaultYes: false });
+  }
+
+  for (const choice of folderChoices) {
+    if (await askYesNo(rl, `  Grant access to ${choice.name}?`, choice.defaultYes)) {
+      try {
+        execSync(`ls "${choice.path}" > /dev/null 2>&1`, { stdio: "ignore", shell: "/bin/bash" });
+      } catch {
+        // permission dialog may have appeared
+      }
+      folders.push(choice.path);
+      console.log(`  Access requested for ${choice.name}`);
+    }
+  }
+
+  // Custom folder
+  if (await askYesNo(rl, "  Add a custom folder path?", false)) {
+    const customPath = await ask(rl, "  Enter folder path: ");
+    if (customPath && fsSync.existsSync(customPath)) {
+      try {
+        execSync(`ls "${customPath}" > /dev/null 2>&1`, { stdio: "ignore", shell: "/bin/bash" });
+      } catch {
+        // permission dialog may have appeared
+      }
+      folders.push(customPath);
+      console.log(`  Access requested for ${customPath}`);
+    } else if (customPath) {
+      console.log(`  Folder not found: ${customPath}`);
+    }
+  }
+
+  console.log("\n  If permission dialogs appeared, make sure to click 'Allow'");
+
+  return folders.join(":");
+}
+
+// ---------------------------------------------------------------------------
+// Mode selection helper
+// ---------------------------------------------------------------------------
+
+async function askModeChoice(rl: readline.Interface): Promise<string> {
+  console.log("\n--- Run Mode ---\n");
+  console.log("  1. Gateway (recommended)");
+  console.log("     Multi-client gateway with Telegram");
+  console.log("");
+  console.log("  2. MCP only");
+  console.log("     Expose as MCP server for Claude Desktop");
+  console.log("");
+  console.log("  3. Both");
+  console.log("     Gateway + MCP server together");
+  console.log("");
+
+  const answer = await ask(rl, "Choose mode [1/2/3] (default: 1): ");
+  switch (answer) {
+    case "2": return "mcp";
+    case "3": return "both";
+    default: return "gateway";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sleep prevention helper (macOS)
+// ---------------------------------------------------------------------------
+
+async function configureSleepPrevention(rl: readline.Interface): Promise<boolean> {
+  console.log("\n--- Sleep Prevention ---\n");
+  console.log("  Preventing system sleep keeps the bot available 24/7.\n");
+
+  if (await askYesNo(rl, "Disable system sleep when plugged in? (requires sudo)")) {
+    try {
+      execSync("sudo pmset -c sleep 0 displaysleep 10", { stdio: "inherit" });
+      console.log("  System configured: sleep disabled when plugged in, display sleeps after 10 min");
+    } catch {
+      console.log("  Failed to set power management (sudo required)");
+    }
+  }
+
+  console.log("");
+  console.log("  Optional: Use caffeinate for extra sleep protection.");
+  console.log("  This wraps the service to prevent sleep while it runs.\n");
+  const useCaffeinate = await askYesNo(rl, "Enable caffeinate?", false);
+  return useCaffeinate;
+}
+
+// ---------------------------------------------------------------------------
+// Claude Desktop MCP config helper
+// ---------------------------------------------------------------------------
+
+function claudeDesktopConfigPath(): string {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  }
+  return path.join(os.homedir(), ".config", "Claude", "claude_desktop_config.json");
+}
+
+async function configureClaudeDesktop(
+  nodePath: string,
+  entryPoint: string,
+  workingDir: string,
+): Promise<void> {
+  const configPath = claudeDesktopConfigPath();
+  const configDir = path.dirname(configPath);
+
+  await fs.mkdir(configDir, { recursive: true });
+
+  let config: any = {};
+  try {
+    const content = await fs.readFile(configPath, "utf-8");
+    config = JSON.parse(content);
+  } catch {
+    // file doesn't exist or invalid — start fresh
+  }
+
+  if (!config.mcpServers) config.mcpServers = {};
+
+  if (config.mcpServers.deskmate) {
+    console.log("  deskmate already configured in Claude Desktop — updating.");
+  }
+
+  config.mcpServers.deskmate = {
+    command: nodePath,
+    args: [entryPoint, "mcp"],
+    env: { WORKING_DIR: workingDir },
+  };
+
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log(`  Claude Desktop config updated: ${configPath}`);
+  console.log("  Restart Claude Desktop for changes to take effect.");
 }
 
 // ---------------------------------------------------------------------------
@@ -413,13 +655,6 @@ export async function runInitWizard(): Promise<void> {
     console.log("Please run this wizard inside a WSL2 terminal.\n");
   }
 
-  const hasClaude = await checkClaudeCLI();
-  if (!hasClaude) {
-    console.log("WARNING: 'claude' CLI not found in PATH.");
-    console.log("Install it from: https://docs.anthropic.com/en/docs/claude-code");
-    console.log("");
-  }
-
   // Detect install type and resolve paths
   const paths = resolveInstallPaths();
 
@@ -445,15 +680,33 @@ export async function runInitWizard(): Promise<void> {
   }
 
   const env: Record<string, string> = {};
-  env.AGENT_PROVIDER = existing.AGENT_PROVIDER || "claude-code";
 
-  // Anthropic API Key
-  if (existing.ANTHROPIC_API_KEY) {
-    const apiKey = await ask(rl, `Anthropic API Key [${mask(existing.ANTHROPIC_API_KEY)}]: `);
-    env.ANTHROPIC_API_KEY = apiKey || existing.ANTHROPIC_API_KEY;
+  // Provider selection
+  const currentProvider = existing.AGENT_PROVIDER || "claude-code";
+  const selectedProvider = await askProviderChoice(rl, currentProvider);
+  env.AGENT_PROVIDER = selectedProvider;
+
+  // API key for selected provider
+  const providerInfo = PROVIDER_INFO[selectedProvider];
+  if (providerInfo?.envKey) {
+    const envKey = providerInfo.envKey;
+    const existingKey = existing[envKey];
+    if (existingKey) {
+      const apiKey = await ask(rl, `${providerInfo.envPrompt} [${mask(existingKey)}]: `);
+      env[envKey] = apiKey || existingKey;
+    } else {
+      const apiKey = await ask(rl, `${providerInfo.envPrompt}: `);
+      if (apiKey) env[envKey] = apiKey;
+    }
   } else {
-    const apiKey = await ask(rl, "Anthropic API Key (for Claude Code): ");
-    if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+    console.log(`\n  ${providerInfo?.label || selectedProvider} manages its own authentication — no API key needed.\n`);
+  }
+
+  // Carry over API keys for other providers (user might switch back)
+  for (const [, info] of Object.entries(PROVIDER_INFO)) {
+    if (info.envKey && info.envKey !== providerInfo?.envKey && existing[info.envKey]) {
+      env[info.envKey] = existing[info.envKey];
+    }
   }
 
   // Telegram
@@ -540,7 +793,48 @@ export async function runInitWizard(): Promise<void> {
     console.log(envContent);
   }
 
-  // ----- Step 3: Service installation -----
+  // ----- Step 3: Mode selection -----
+
+  const runMode = await askModeChoice(rl);
+  console.log(`  Mode selected: ${runMode}`);
+
+  // ----- Step 4: macOS permissions -----
+
+  if (platform === "macos") {
+    const setupPerms = await askYesNo(rl, "\nConfigure macOS permissions?");
+    if (setupPerms) {
+      await offerMacosPermissions(rl);
+    }
+  }
+
+  // ----- Step 5: macOS folder access -----
+
+  if (platform === "macos") {
+    const setupFolders = await askYesNo(rl, "\nConfigure folder access?");
+    if (setupFolders) {
+      const foldersStr = await offerMacosFolderAccess(rl);
+      if (foldersStr) {
+        env.ALLOWED_FOLDERS = foldersStr;
+        // Re-write .env with updated folders
+        let updatedContent = "# Deskmate Configuration (generated by deskmate init)\n\n";
+        for (const [key, value] of Object.entries(env)) {
+          updatedContent += `${key}=${value}\n`;
+        }
+        if (!env.LOG_LEVEL) updatedContent += "LOG_LEVEL=info\n";
+        if (!env.REQUIRE_APPROVAL_FOR_ALL) updatedContent += "REQUIRE_APPROVAL_FOR_ALL=false\n";
+        await fs.writeFile(envPath, updatedContent, "utf-8");
+      }
+    }
+  }
+
+  // ----- Step 6: Sleep prevention (macOS, gateway/both) -----
+
+  let useCaffeinate = false;
+  if (platform === "macos" && (runMode === "gateway" || runMode === "both")) {
+    useCaffeinate = await configureSleepPrevention(rl);
+  }
+
+  // ----- Step 7: Service installation -----
 
   if (platform === "macos" || platform === "linux") {
     console.log("");
@@ -548,12 +842,11 @@ export async function runInitWizard(): Promise<void> {
 
     if (installService) {
       const logsDir = path.join(paths.configDir, "logs");
-      const runMode = "gateway";
       const execStart = paths.execStart(runMode);
 
       try {
         if (platform === "macos") {
-          await installMacosService(execStart, paths.configDir, logsDir);
+          await installMacosService(execStart, paths.configDir, logsDir, useCaffeinate);
         } else {
           await installLinuxService(execStart, paths.configDir, logsDir);
         }
@@ -562,20 +855,30 @@ export async function runInitWizard(): Promise<void> {
         console.log("  You can install manually with ./install.sh");
       }
 
-      // macOS permissions
-      if (platform === "macos") {
-        const setupPerms = await askYesNo(rl, "\nConfigure macOS permissions?");
-        if (setupPerms) {
-          await offerMacosPermissions(rl);
-        }
-      }
-
       printManagementCommands(platform, logsDir);
     }
   } else if (platform === "windows") {
     console.log(
       "\nTo run as a service on Windows, open a WSL2 terminal and run: deskmate init",
     );
+  }
+
+  // ----- Step 8: Claude Desktop MCP config (mcp/both modes) -----
+
+  if (runMode === "mcp" || runMode === "both") {
+    console.log("");
+    const configureMcp = await askYesNo(rl, "Configure Claude Desktop for MCP?");
+    if (configureMcp) {
+      try {
+        const nodePath = process.execPath;
+        const entryPoint = paths.isGlobalInstall
+          ? path.join(paths.packageDir, "dist", "cli.js")
+          : path.join(paths.packageDir, "dist", "index.js");
+        await configureClaudeDesktop(nodePath, entryPoint, env.WORKING_DIR || os.homedir());
+      } catch (err: any) {
+        console.error(`  Failed to configure Claude Desktop: ${err.message}`);
+      }
+    }
   }
 
   rl.close();

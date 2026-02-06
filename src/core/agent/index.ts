@@ -38,5 +38,9 @@ export {
   isProviderAvailable,
 } from "./factory";
 
-// Built-in provider
+// Built-in providers
 export { ClaudeCodeProvider } from "./providers/claude-code";
+export { BaseCliProvider } from "./providers/base-cli";
+export { CodexProvider } from "./providers/codex";
+export { GeminiProvider } from "./providers/gemini";
+export { OpenCodeProvider } from "./providers/opencode";
