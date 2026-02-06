@@ -6,6 +6,11 @@ import * as path from "path";
 import * as os from "os";
 import type { UserIdentity } from "./gateway/types";
 
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"),
+);
+const VERSION: string = pkg.version;
+
 // Load .env: try cwd first (source install / service), then ~/.config/deskmate/ (npm global)
 const cwdEnv = path.join(process.cwd(), ".env");
 const configEnv = path.join(os.homedir(), ".config", "deskmate", ".env");
@@ -85,6 +90,9 @@ async function main() {
       // Future: Discord, Slack, etc.
 
       await gateway.start();
+
+      const { startTray } = await import("./cli/tray");
+      startTray(VERSION);
       break;
     }
 
@@ -121,6 +129,10 @@ async function main() {
 
       // Start gateway in background, MCP on stdio
       gateway.start().catch(console.error);
+
+      const { startTray: startTrayBoth } = await import("./cli/tray");
+      startTrayBoth(VERSION);
+
       await startMcpServer();
       break;
     }

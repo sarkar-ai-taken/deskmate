@@ -88,15 +88,6 @@ fi
 
 echo -e "${GREEN}✓ Node.js found: $NODE_PATH${NC}"
 
-# Check if Claude Code is installed (required for Agent SDK)
-CLAUDE_PATH=$(which claude 2>/dev/null || echo "")
-if [ -z "$CLAUDE_PATH" ]; then
-    echo -e "${RED}Error: Claude Code CLI not found. Please install it first:${NC}"
-    echo -e "${YELLOW}  curl -fsSL https://claude.ai/install.sh | bash${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✓ Claude Code found: $CLAUDE_PATH${NC}"
-
 # Linux: check for screenshot tool
 if [ "$PLATFORM" = "linux" ]; then
     SCREENSHOT_TOOL=""
@@ -145,7 +136,10 @@ mask_value() {
 }
 
 # Load existing values (if any)
-EXISTING_API_KEY=$(env_get ANTHROPIC_API_KEY)
+EXISTING_PROVIDER=$(env_get AGENT_PROVIDER)
+EXISTING_ANTHROPIC_KEY=$(env_get ANTHROPIC_API_KEY)
+EXISTING_OPENAI_KEY=$(env_get OPENAI_API_KEY)
+EXISTING_GEMINI_KEY=$(env_get GEMINI_API_KEY)
 EXISTING_TOKEN=$(env_get TELEGRAM_BOT_TOKEN)
 EXISTING_USER_ID=$(env_get ALLOWED_USER_ID)
 EXISTING_USERS=$(env_get ALLOWED_USERS)
@@ -156,25 +150,77 @@ EXISTING_REQUIRE_APPROVAL=$(env_get REQUIRE_APPROVAL_FOR_ALL)
 EXISTING_ALLOWED_FOLDERS=$(env_get ALLOWED_FOLDERS)
 
 HAS_EXISTING=false
-if [ -f "$PROJECT_DIR/.env" ] && [ -n "$EXISTING_TOKEN$EXISTING_API_KEY$EXISTING_USERS$EXISTING_USER_ID" ]; then
+if [ -f "$PROJECT_DIR/.env" ] && [ -n "$EXISTING_TOKEN$EXISTING_ANTHROPIC_KEY$EXISTING_USERS$EXISTING_USER_ID" ]; then
     HAS_EXISTING=true
     echo -e "${GREEN}Found existing .env — press Enter to keep current values.${NC}"
 fi
 
+# --- Agent Provider Selection ---
 echo ""
-echo -e "${YELLOW}Enter your credentials (press Enter to keep existing / skip):${NC}"
+echo -e "${YELLOW}--- Agent Provider ---${NC}"
 echo ""
 
-# Anthropic API Key
-if [ -n "$EXISTING_API_KEY" ]; then
-    read -p "  Anthropic API Key [$(mask_value "$EXISTING_API_KEY")]: " ANTHROPIC_API_KEY
-    ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-$EXISTING_API_KEY}
-else
-    read -p "  Anthropic API Key: " ANTHROPIC_API_KEY
-    if [ -z "$ANTHROPIC_API_KEY" ]; then
-        echo -e "  ${RED}Warning: No API key entered. You'll need to set ANTHROPIC_API_KEY in .env later.${NC}"
-    fi
-fi
+CLAUDE_INSTALLED=$(command -v claude &>/dev/null && echo "${GREEN}(installed)${NC}" || echo "${RED}(not found)${NC}")
+CODEX_INSTALLED=$(command -v codex &>/dev/null && echo "${GREEN}(installed)${NC}" || echo "${RED}(not found)${NC}")
+GEMINI_INSTALLED=$(command -v gemini &>/dev/null && echo "${GREEN}(installed)${NC}" || echo "${RED}(not found)${NC}")
+OPENCODE_INSTALLED=$(command -v opencode &>/dev/null && echo "${GREEN}(installed)${NC}" || echo "${RED}(not found)${NC}")
+
+CURRENT_PROVIDER=${EXISTING_PROVIDER:-claude-code}
+CURRENT_TAG=""
+
+echo -e "  1. Claude Code (Anthropic) $CLAUDE_INSTALLED$([ "$CURRENT_PROVIDER" = "claude-code" ] && echo " ${BLUE}<-- current${NC}")"
+echo -e "  2. Codex (OpenAI) $CODEX_INSTALLED$([ "$CURRENT_PROVIDER" = "codex" ] && echo " ${BLUE}<-- current${NC}")"
+echo -e "  3. Gemini CLI (Google) $GEMINI_INSTALLED$([ "$CURRENT_PROVIDER" = "gemini" ] && echo " ${BLUE}<-- current${NC}")"
+echo -e "  4. OpenCode $OPENCODE_INSTALLED$([ "$CURRENT_PROVIDER" = "opencode" ] && echo " ${BLUE}<-- current${NC}")"
+echo ""
+
+read -p "Choose provider [1-4] (Enter to keep current): " PROVIDER_CHOICE
+
+case "$PROVIDER_CHOICE" in
+    1) AGENT_PROVIDER="claude-code" ;;
+    2) AGENT_PROVIDER="codex" ;;
+    3) AGENT_PROVIDER="gemini" ;;
+    4) AGENT_PROVIDER="opencode" ;;
+    *) AGENT_PROVIDER="$CURRENT_PROVIDER" ;;
+esac
+
+echo -e "${GREEN}✓ Provider: $AGENT_PROVIDER${NC}"
+
+# API key for selected provider
+ANTHROPIC_API_KEY="$EXISTING_ANTHROPIC_KEY"
+OPENAI_API_KEY="$EXISTING_OPENAI_KEY"
+GEMINI_API_KEY="$EXISTING_GEMINI_KEY"
+
+echo ""
+case "$AGENT_PROVIDER" in
+    claude-code)
+        if [ -n "$EXISTING_ANTHROPIC_KEY" ]; then
+            read -p "  Anthropic API Key [$(mask_value "$EXISTING_ANTHROPIC_KEY")]: " NEW_KEY
+            ANTHROPIC_API_KEY=${NEW_KEY:-$EXISTING_ANTHROPIC_KEY}
+        else
+            read -p "  Anthropic API Key: " ANTHROPIC_API_KEY
+        fi
+        ;;
+    codex)
+        if [ -n "$EXISTING_OPENAI_KEY" ]; then
+            read -p "  OpenAI API Key [$(mask_value "$EXISTING_OPENAI_KEY")]: " NEW_KEY
+            OPENAI_API_KEY=${NEW_KEY:-$EXISTING_OPENAI_KEY}
+        else
+            read -p "  OpenAI API Key: " OPENAI_API_KEY
+        fi
+        ;;
+    gemini)
+        if [ -n "$EXISTING_GEMINI_KEY" ]; then
+            read -p "  Gemini API Key [$(mask_value "$EXISTING_GEMINI_KEY")]: " NEW_KEY
+            GEMINI_API_KEY=${NEW_KEY:-$EXISTING_GEMINI_KEY}
+        else
+            read -p "  Gemini API Key: " GEMINI_API_KEY
+        fi
+        ;;
+    opencode)
+        echo -e "  OpenCode manages its own authentication — no API key needed."
+        ;;
+esac
 
 # Telegram
 echo ""
@@ -221,28 +267,22 @@ REQUIRE_APPROVAL=${EXISTING_REQUIRE_APPROVAL:-false}
 ALLOWED_FOLDERS_VAL=${EXISTING_ALLOWED_FOLDERS}
 
 # Write .env
-cat > "$PROJECT_DIR/.env" << EOF
-# Deskmate Configuration (generated by install.sh)
-
-ALLOWED_USERS=${ALLOWED_USERS_VAL}
-TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-AGENT_PROVIDER=claude-code
-WORKING_DIR=${WORKING_DIR}
-BOT_NAME=${BOT_NAME}
-LOG_LEVEL=${LOG_LEVEL}
-REQUIRE_APPROVAL_FOR_ALL=${REQUIRE_APPROVAL}
-EOF
-
-# Add legacy user ID if we have one
-if [ -n "$TELEGRAM_USER_ID" ]; then
-    echo "ALLOWED_USER_ID=${TELEGRAM_USER_ID}" >> "$PROJECT_DIR/.env"
-fi
-
-# Carry over allowed folders
-if [ -n "$ALLOWED_FOLDERS_VAL" ]; then
-    echo "ALLOWED_FOLDERS=${ALLOWED_FOLDERS_VAL}" >> "$PROJECT_DIR/.env"
-fi
+{
+    echo "# Deskmate Configuration (generated by install.sh)"
+    echo ""
+    echo "AGENT_PROVIDER=${AGENT_PROVIDER}"
+    [ -n "$ANTHROPIC_API_KEY" ] && echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
+    [ -n "$OPENAI_API_KEY" ] && echo "OPENAI_API_KEY=${OPENAI_API_KEY}"
+    [ -n "$GEMINI_API_KEY" ] && echo "GEMINI_API_KEY=${GEMINI_API_KEY}"
+    echo "ALLOWED_USERS=${ALLOWED_USERS_VAL}"
+    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"
+    echo "WORKING_DIR=${WORKING_DIR}"
+    echo "BOT_NAME=${BOT_NAME}"
+    echo "LOG_LEVEL=${LOG_LEVEL}"
+    echo "REQUIRE_APPROVAL_FOR_ALL=${REQUIRE_APPROVAL}"
+    [ -n "$TELEGRAM_USER_ID" ] && echo "ALLOWED_USER_ID=${TELEGRAM_USER_ID}"
+    [ -n "$ALLOWED_FOLDERS_VAL" ] && echo "ALLOWED_FOLDERS=${ALLOWED_FOLDERS_VAL}"
+} > "$PROJECT_DIR/.env"
 
 echo -e "\n${GREEN}✓ .env file written${NC}"
 

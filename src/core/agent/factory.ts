@@ -12,6 +12,9 @@ import {
   AgentProviderConfig,
 } from "./types";
 import { ClaudeCodeProvider } from "./providers/claude-code";
+import { CodexProvider } from "./providers/codex";
+import { GeminiProvider } from "./providers/gemini";
+import { OpenCodeProvider } from "./providers/opencode";
 import { createLogger } from "../logger";
 
 const log = createLogger("AgentFactory");
@@ -19,6 +22,9 @@ const log = createLogger("AgentFactory");
 // Registry of available providers — extensible via registerProvider()
 const providerRegistry = new Map<AgentProviderType, new () => AgentProvider>([
   ["claude-code", ClaudeCodeProvider],
+  ["codex", CodexProvider],
+  ["gemini", GeminiProvider],
+  ["opencode", OpenCodeProvider],
 ]);
 
 /**
