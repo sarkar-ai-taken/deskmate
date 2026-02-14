@@ -1,6 +1,6 @@
 {
   "name": "@sarkar-ai/deskmate",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Control your local machine from anywhere using natural language via Telegram or MCP.",
   "author": "Deskmate Contributors",
   "license": "MIT",
@@ -29,7 +29,8 @@
   ],
   "main": "dist/index.js",
   "bin": {
-    "deskmate": "./dist/cli.js"
+    "deskmate": "./dist/cli.js",
+    "deskmate-sidecar": "./dist/sidecar/cli.js"
   },
   "files": [
     "dist",
@@ -38,7 +39,9 @@
     "LICENSE",
     ".env.example",
     "install.sh",
-    "uninstall.sh"
+    "uninstall.sh",
+    "Dockerfile",
+    "docker-compose.yml"
   ],
   "publishConfig": {
     "access": "public"
@@ -54,6 +57,7 @@
     "start:both": "node dist/index.js both",
     "dev": "tsx src/index.ts",
     "dev:mcp": "tsx src/index.ts mcp",
+    "sidecar": "node dist/cli.js sidecar",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
@@ -63,10 +67,12 @@
     "@sarkar-ai/deskmate": "^0.2.1",
     "dotenv": "^16.3.1",
     "grammy": "^1.21.1",
+    "node-cron": "^3.0.3",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0",
     "vitest": "^4.0.18"

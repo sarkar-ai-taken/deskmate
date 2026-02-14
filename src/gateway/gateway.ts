@@ -1,8 +1,12 @@
 import { createLogger } from "../core/logger";
-import { Executor } from "../core/executor";
+import type { IExecutor } from "../core/executor-interface";
+import { createExecutor } from "../core/executor-factory";
 import { approvalManager, PendingAction } from "../core/approval";
 import { createAgentProvider, AgentProvider } from "../core/agent";
 import { getScreenshotHint } from "../core/platform";
+import { HealthManager, formatHealthStatus } from "../core/health";
+import { SkillRegistry, SkillExecutor } from "../core/skills";
+import { CronScheduler } from "../core/cron";
 import { SecurityManager } from "./security";
 import { SessionManager } from "./session";
 import type {
@@ -23,10 +27,15 @@ export class Gateway implements MessageHandler {
   private clients = new Map<string, MessagingClient>();
   private security: SecurityManager;
   private sessions: SessionManager;
-  private executor: Executor;
+  private executor: IExecutor;
   private agentProvider: AgentProvider;
   private config: GatewayConfig;
   private systemPrompt: string;
+  private healthManager: HealthManager;
+  private skillRegistry: SkillRegistry;
+  private skillExecutor: SkillExecutor | null = null;
+  private cronScheduler: CronScheduler;
+  private startedAt: Date = new Date();
 
   constructor(config: GatewayConfig) {
     this.config = config;
@@ -34,7 +43,7 @@ export class Gateway implements MessageHandler {
     this.sessions = new SessionManager({
       storagePath: config.storagePath,
     });
-    this.executor = new Executor(config.workingDir);
+    this.executor = createExecutor(config.workingDir);
     this.agentProvider = createAgentProvider();
     this.systemPrompt =
       config.systemPrompt ||
@@ -54,6 +63,25 @@ IMPORTANT RULES:
 - Never use sudo unless explicitly asked
 - Keep responses under 4000 characters
 - When asked for screenshots, always use the screenshot command above`;
+
+    // Initialize health manager
+    const intervalMs = process.env.HEALTH_CHECK_INTERVAL
+      ? parseInt(process.env.HEALTH_CHECK_INTERVAL, 10)
+      : undefined;
+    this.healthManager = new HealthManager({ heartbeatIntervalMs: intervalMs });
+
+    // Initialize skill registry
+    this.skillRegistry = new SkillRegistry();
+    this.skillRegistry.load();
+
+    // Append skills to system prompt
+    const skillsSection = this.skillRegistry.getSystemPromptSection();
+    if (skillsSection) {
+      this.systemPrompt += skillsSection;
+    }
+
+    // Initialize cron scheduler
+    this.cronScheduler = new CronScheduler();
   }
 
   registerClient(client: MessagingClient): void {
@@ -68,6 +96,8 @@ IMPORTANT RULES:
     if (this.clients.size === 0) {
       throw new Error("No clients registered. Register at least one MessagingClient before starting.");
     }
+
+    this.startedAt = new Date();
 
     // Verify agent provider
     log.info("Using agent provider", {
@@ -84,6 +114,100 @@ IMPORTANT RULES:
       await this.broadcastApproval(action);
     });
 
+    // Register health checks
+    this.healthManager.registerCheck(async () => {
+      const agentAvailable = await this.agentProvider.isAvailable();
+      return {
+        agentProvider: {
+          name: this.agentProvider.name,
+          version: this.agentProvider.version,
+          available: agentAvailable,
+          lastCheckedAt: new Date(),
+        },
+        gateway: {
+          uptimeMs: Date.now() - this.startedAt.getTime(),
+          startedAt: this.startedAt,
+          activeSessionsCount: this.sessions.size(),
+          pendingApprovalsCount: approvalManager.getPendingActions().length,
+          registeredClients: Array.from(this.clients.keys()),
+        },
+        skills: { registeredCount: this.skillRegistry.size() },
+        cron: {
+          activeJobsCount: this.cronScheduler.activeCount(),
+          nextRunAt: this.cronScheduler.getNextRunAt(),
+        },
+      };
+    });
+
+    await this.healthManager.start();
+
+    // Start skill watching and create executor
+    this.skillRegistry.startWatching();
+    this.skillExecutor = new SkillExecutor({
+      executor: this.executor,
+      agentProvider: this.agentProvider,
+      agentQueryOptions: {
+        systemPrompt: this.systemPrompt,
+        workingDir: this.config.workingDir,
+      },
+      skillLookup: (name) => this.skillRegistry.get(name),
+    });
+
+    // Rebuild system prompt when skills change
+    this.skillRegistry.on("reloaded", () => {
+      const basePrompt = this.systemPrompt.split("\n\nAVAILABLE SKILLS:")[0];
+      const section = this.skillRegistry.getSystemPromptSection();
+      this.systemPrompt = basePrompt + section;
+      log.info("System prompt updated with new skills");
+    });
+
+    // Wire cron scheduler
+    this.cronScheduler.setExecutionBackend({
+      runCommand: async (command) => {
+        const result = await this.executor.executeCommand(command);
+        return { success: result.success, output: result.output };
+      },
+      runAgentQuery: async (prompt) => {
+        const response = await this.agentProvider.query(prompt, {
+          systemPrompt: this.systemPrompt,
+          workingDir: this.config.workingDir,
+        });
+        return { text: response.text };
+      },
+      runSkill: async (skillName, params) => {
+        const skill = this.skillRegistry.get(skillName);
+        if (!skill) {
+          return { success: false, output: `Skill "${skillName}" not found` };
+        }
+        const result = await this.skillExecutor!.execute(skill, params);
+        const output = result.steps.map((s) => s.output).join("\n");
+        return { success: result.success, output };
+      },
+    });
+
+    this.cronScheduler.setNotifier(async (_jobName, resultText) => {
+      const recentChannels = this.sessions.getRecentChannels(30 * 60 * 1000);
+      for (const { clientType, channelId } of recentChannels) {
+        const client = this.clients.get(clientType);
+        if (!client) continue;
+        try {
+          await client.sendMessage({
+            channelId,
+            text: resultText.slice(0, 4000),
+            parseMode: "markdown",
+          });
+        } catch (err: any) {
+          log.error("Failed to send cron notification", {
+            clientType,
+            channelId,
+            error: err.message,
+          });
+        }
+      }
+    });
+
+    this.cronScheduler.start();
+
     // Start all clients
     for (const client of this.clients.values()) {
       await client.start(this);
@@ -98,10 +222,17 @@ IMPORTANT RULES:
       await client.stop();
     }
     this.sessions.stop();
+    this.healthManager.stop();
+    this.skillRegistry.stop();
+    this.cronScheduler.stop();
     if (this.agentProvider.cleanup) {
       await this.agentProvider.cleanup();
     }
     log.info("Gateway stopped");
+  }
+
+  getHealthManager(): HealthManager {
+    return this.healthManager;
   }
 
   // ── MessageHandler implementation ───────────────────────────────────
@@ -167,9 +298,12 @@ IMPORTANT RULES:
             "- `show disk usage`\n" +
             "- `take a screenshot`\n\n" +
             "*Commands:*\n" +
+            "- /health - System health\n" +
+            "- /skill - List or run skills\n" +
+            "- /cron - Cron job status\n" +
             "- /screenshot - Take a screenshot\n" +
             "- /status - System info\n" +
-            "- /reset - Clear memory & start fresh",
+            "- /reset - Clear memory",
           parseMode: "markdown",
         });
         break;
@@ -184,6 +318,18 @@ IMPORTANT RULES:
 
       case "reset":
         await this.handleResetCommand(msg, client);
+        break;
+
+      case "health":
+        await this.handleHealthCommand(msg, client);
+        break;
+
+      case "skill":
+        await this.handleSkillCommand(msg, client);
+        break;
+
+      case "cron":
+        await this.handleCronCommand(msg, client);
         break;
 
       default:
@@ -257,6 +403,172 @@ IMPORTANT RULES:
       text: had
         ? "Session cleared! Starting fresh conversation."
         : "No active session to clear.",
+    });
+  }
+
+  private async handleHealthCommand(
+    msg: IncomingMessage,
+    client: MessagingClient,
+  ): Promise<void> {
+    try {
+      const status = await this.healthManager.checkNow();
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text: formatHealthStatus(status),
+        parseMode: "markdown",
+      });
+    } catch (err: any) {
+      const cached = this.healthManager.getStatus();
+      if (cached) {
+        await client.sendMessage({
+          channelId: msg.channelId,
+          text: formatHealthStatus(cached) + "\n\n(cached, fresh check failed)",
+          parseMode: "markdown",
+        });
+      } else {
+        await client.sendMessage({
+          channelId: msg.channelId,
+          text: `Health check failed: ${err.message}`,
+        });
+      }
+    }
+  }
+
+  private async handleSkillCommand(
+    msg: IncomingMessage,
+    client: MessagingClient,
+  ): Promise<void> {
+    // Parse: /skill or /skill <name> [key=val ...]
+    const parts = (msg.text || "").replace(/^\/skill\s*/, "").trim().split(/\s+/);
+    const skillName = parts[0] || "";
+
+    if (!skillName) {
+      // List all skills
+      const skills = this.skillRegistry.list();
+      if (skills.length === 0) {
+        await client.sendMessage({
+          channelId: msg.channelId,
+          text: "No skills registered. Create a `skills.json` file to define skills.",
+        });
+        return;
+      }
+
+      const list = skills
+        .map((s) => `- *${s.name}*: ${s.description}`)
+        .join("\n");
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text: `*Available Skills*\n\n${list}\n\nUsage: /skill <name> [key=val ...]`,
+        parseMode: "markdown",
+      });
+      return;
+    }
+
+    // Run a specific skill
+    const skill = this.skillRegistry.get(skillName);
+    if (!skill) {
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text: `Skill "${skillName}" not found. Use /skill to list available skills.`,
+      });
+      return;
+    }
+
+    // Parse params
+    const params: Record<string, string> = {};
+    for (let i = 1; i < parts.length; i++) {
+      const eqIdx = parts[i].indexOf("=");
+      if (eqIdx > 0) {
+        params[parts[i].slice(0, eqIdx)] = parts[i].slice(eqIdx + 1);
+      }
+    }
+
+    // Validate required params
+    if (skill.parameters) {
+      for (const p of skill.parameters) {
+        if (p.required && !params[p.name] && p.default === undefined) {
+          await client.sendMessage({
+            channelId: msg.channelId,
+            text: `Missing required parameter: ${p.name}`,
+          });
+          return;
+        }
+      }
+    }
+
+    if (!this.skillExecutor) {
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text: "Skill executor not ready. Please wait for gateway to fully start.",
+      });
+      return;
+    }
+
+    await client.sendMessage({
+      channelId: msg.channelId,
+      text: `Running skill *${skillName}*...`,
+      parseMode: "markdown",
+    });
+
+    try {
+      const result = await this.skillExecutor.execute(skill, params);
+      const stepsSummary = result.steps
+        .map(
+          (s) =>
+            `Step ${s.stepIndex + 1} (${s.type}): ${s.success ? "OK" : "FAILED"}\n${s.output.slice(0, 500)}`,
+        )
+        .join("\n\n");
+
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text:
+          `*Skill ${skillName}: ${result.success ? "Completed" : "Failed"}*\n` +
+          `Duration: ${result.totalDurationMs}ms\n\n${stepsSummary}`.slice(0, 4000),
+        parseMode: "markdown",
+      });
+    } catch (err: any) {
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text: `Skill execution error: ${err.message}`,
+      });
+    }
+  }
+
+  private async handleCronCommand(
+    msg: IncomingMessage,
+    client: MessagingClient,
+  ): Promise<void> {
+    const jobs = this.cronScheduler.getJobStates();
+
+    if (jobs.length === 0) {
+      await client.sendMessage({
+        channelId: msg.channelId,
+        text: "No cron jobs configured. Create a `crons.json` file to define jobs.",
+      });
+      return;
+    }
+
+    const lines = jobs.map((j) => {
+      const status = !j.enabled
+        ? "disabled"
+        : j.lastSuccess === null
+          ? "pending"
+          : j.lastSuccess
+            ? "ok"
+            : "failed";
+      const lastRun = j.lastRunAt
+        ? j.lastRunAt.toLocaleString()
+        : "never";
+      return (
+        `- *${j.name}* (${j.schedule}): ${status}\n` +
+        `  Last run: ${lastRun} | Runs: ${j.runCount} | Failures: ${j.failCount}`
+      );
+    });
+
+    await client.sendMessage({
+      channelId: msg.channelId,
+      text: `*Cron Jobs*\n\n${lines.join("\n")}`,
+      parseMode: "markdown",
     });
   }
 

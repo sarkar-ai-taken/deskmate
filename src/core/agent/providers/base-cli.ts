@@ -14,6 +14,7 @@ import {
   AgentQueryOptions,
 } from "../types";
 import { createLogger } from "../../logger";
+import { isContainerMode } from "../../executor-factory";
 
 export abstract class BaseCliProvider implements AgentProvider {
   abstract readonly name: string;
@@ -87,6 +88,12 @@ export abstract class BaseCliProvider implements AgentProvider {
     prompt: string,
     options?: AgentQueryOptions
   ): AsyncGenerator<AgentStreamEvent, void, unknown> {
+    // In container mode, delegate to sidecar to spawn the CLI on the host
+    if (isContainerMode()) {
+      yield* this.queryStreamRemote(prompt, options);
+      return;
+    }
+
     const args = this.buildArgs(prompt, options);
     const env = this.buildEnv();
 
@@ -159,7 +166,61 @@ export abstract class BaseCliProvider implements AgentProvider {
     };
   }
 
+  /**
+   * Spawn the CLI agent on the host via the sidecar /spawn-cli-agent endpoint.
+   */
+  private async *queryStreamRemote(
+    prompt: string,
+    options?: AgentQueryOptions
+  ): AsyncGenerator<AgentStreamEvent, void, unknown> {
+    const args = this.buildArgs(prompt, options);
+    const env = this.buildEnv();
+
+    this.log.info("Spawning CLI via sidecar", { binary: this.binary, args });
+    yield { type: "thinking" };
+
+    try {
+      const { RemoteExecutor } = require("../../core/remote-executor");
+      const remote = new RemoteExecutor();
+      const result: { output: string; stderr: string; exitCode: number | null } =
+        await remote.request("POST", "/spawn-cli-agent", {
+          binary: this.binary,
+          args,
+          env,
+          cwd: options?.workingDir || process.env.WORKING_DIR || process.env.HOME || "/",
+        });
+
+      if (result.exitCode !== 0 && result.exitCode !== null) {
+        const errorMsg = result.stderr.trim() || `${this.binary} exited with code ${result.exitCode}`;
+        this.log.error("Remote process failed", { exitCode: result.exitCode });
+        yield { type: "error", error: errorMsg };
+        return;
+      }
+
+      const text = this.extractFinalText(result.output);
+
+      if (text) {
+        yield { type: "text", text };
+      }
+
+      yield {
+        type: "done",
+        response: {
+          text: text || "Task completed (no output)",
+        },
+      };
+    } catch (error: any) {
+      this.log.error("Remote spawn failed", { error: error.message });
+      yield { type: "error", error: error.message };
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
+    // In container mode, the binary lives on the host — skip local check
+    if (isContainerMode()) {
+      return true;
+    }
+
     try {
       execSync(`which ${this.binary}`, { stdio: "ignore" });
       return true;

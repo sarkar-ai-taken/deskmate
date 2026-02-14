@@ -26,6 +26,9 @@ export class TelegramClient implements MessagingClient {
     this.bot.command("screenshot", (ctx) => this.dispatch(ctx, "screenshot"));
     this.bot.command("status", (ctx) => this.dispatch(ctx, "status"));
     this.bot.command("reset", (ctx) => this.dispatch(ctx, "reset"));
+    this.bot.command("health", (ctx) => this.dispatch(ctx, "health"));
+    this.bot.command("skill", (ctx) => this.dispatch(ctx, "skill"));
+    this.bot.command("cron", (ctx) => this.dispatch(ctx, "cron"));
 
     // Text messages
     this.bot.on("message:text", async (ctx) => {

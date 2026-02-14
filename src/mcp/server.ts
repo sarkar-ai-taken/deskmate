@@ -3,14 +3,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Executor } from "../core/executor";
+import * as os from "os";
+import { createExecutor } from "../core/executor-factory";
 import { approvalManager } from "../core/approval";
 import { createStderrLogger } from "../core/logger";
+import { HealthManager, formatHealthStatus } from "../core/health";
+import { SkillRegistry, SkillExecutor } from "../core/skills";
+import { CronScheduler } from "../core/cron";
+import { createAgentProvider } from "../core/agent";
 
 const log = createStderrLogger("MCP");
 
 export async function startMcpServer(): Promise<void> {
-  const executor = new Executor();
+  const executor = createExecutor();
 
   const server = new McpServer({
     name: "deskmate",
@@ -62,6 +67,16 @@ export async function startMcpServer(): Promise<void> {
     async ({ path }) => {
       log.info("Tool invoked: read_file", { path });
       try {
+        const resolvedPath = require("path").isAbsolute(path)
+          ? path
+          : require("path").join(executor.getWorkingDir(), path);
+        const approved = await approvalManager.requestFolderAccess(resolvedPath);
+        if (!approved) {
+          return {
+            content: [{ type: "text" as const, text: `Access to ${resolvedPath} was not approved` }],
+            isError: true,
+          };
+        }
         const content = await executor.readFile(path);
         log.debug("Tool completed: read_file", { path, size: content.length });
         return {
@@ -127,6 +142,18 @@ export async function startMcpServer(): Promise<void> {
     async ({ path }) => {
       log.info("Tool invoked: list_directory", { path });
       try {
+        const resolvedPath = path
+          ? require("path").isAbsolute(path)
+            ? path
+            : require("path").join(executor.getWorkingDir(), path)
+          : executor.getWorkingDir();
+        const approved = await approvalManager.requestFolderAccess(resolvedPath);
+        if (!approved) {
+          return {
+            content: [{ type: "text" as const, text: `Access to ${resolvedPath} was not approved` }],
+            isError: true,
+          };
+        }
         const files = await executor.listDirectory(path);
         const output = files
           .map((f) => {
@@ -189,6 +216,168 @@ export async function startMcpServer(): Promise<void> {
         .map((a) => `[${a.id}] ${a.type}: ${a.description}`)
         .join("\n");
 
+      return {
+        content: [{ type: "text" as const, text: output }],
+      };
+    }
+  );
+
+  // Tool: Get health status
+  server.tool(
+    "get_health",
+    "Get system health status including resource metrics, agent availability, and subsystem status",
+    {},
+    async () => {
+      log.info("Tool invoked: get_health");
+
+      // Standalone MCP mode: lightweight resource-only check
+      const healthManager = new HealthManager();
+      try {
+        const status = await healthManager.checkNow();
+        const text = formatHealthStatus(status);
+        log.debug("Tool completed: get_health");
+        return {
+          content: [{ type: "text" as const, text }],
+        };
+      } catch (error: any) {
+        // Fallback: basic resource info
+        const loadAvg = os.loadavg();
+        const cpuCount = os.cpus().length;
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const text =
+          `CPU Load: ${Math.round((loadAvg[0] / cpuCount) * 100)}%\n` +
+          `Memory: ${Math.round(((totalMem - freeMem) / totalMem) * 100)}% (${Math.round((totalMem - freeMem) / (1024 * 1024))} MB / ${Math.round(totalMem / (1024 * 1024))} MB)\n` +
+          `Process Uptime: ${Math.round(process.uptime())}s\n` +
+          `Node Heap: ${Math.round(process.memoryUsage().heapUsed / (1024 * 1024))} MB`;
+        return {
+          content: [{ type: "text" as const, text }],
+        };
+      } finally {
+        healthManager.stop();
+      }
+    }
+  );
+
+  // Tool: List skills
+  server.tool(
+    "list_skills",
+    "List all registered skills with their descriptions and parameters",
+    {},
+    async () => {
+      log.info("Tool invoked: list_skills");
+      const registry = new SkillRegistry();
+      registry.load();
+
+      const skills = registry.list();
+      if (skills.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No skills registered. Create a skills.json file to define skills." }],
+        };
+      }
+
+      const output = skills
+        .map((s) => `${s.name}: ${s.description}`)
+        .join("\n");
+
+      log.debug("Tool completed: list_skills", { count: skills.length });
+      return {
+        content: [{ type: "text" as const, text: output }],
+      };
+    }
+  );
+
+  // Tool: Run a skill
+  server.tool(
+    "run_skill",
+    "Run a named skill with optional parameters",
+    {
+      name: z.string().describe("The skill name to run"),
+      params: z.record(z.string()).optional().describe("Key-value parameters for the skill"),
+    },
+    async ({ name, params }) => {
+      log.info("Tool invoked: run_skill", { name, params });
+
+      const registry = new SkillRegistry();
+      registry.load();
+
+      const skill = registry.get(name);
+      if (!skill) {
+        return {
+          content: [{ type: "text" as const, text: `Skill "${name}" not found` }],
+          isError: true,
+        };
+      }
+
+      const agentProvider = createAgentProvider();
+      const skillExecutor = new SkillExecutor({
+        executor,
+        agentProvider,
+        skillLookup: (n) => registry.get(n),
+      });
+
+      try {
+        const result = await skillExecutor.execute(skill, params || {});
+        const stepsSummary = result.steps
+          .map(
+            (s) =>
+              `Step ${s.stepIndex + 1} (${s.type}): ${s.success ? "OK" : "FAILED"}\n${s.output.slice(0, 1000)}`,
+          )
+          .join("\n\n");
+
+        const text =
+          `Skill ${name}: ${result.success ? "Completed" : "Failed"}\n` +
+          `Duration: ${result.totalDurationMs}ms\n\n${stepsSummary}`;
+
+        log.debug("Tool completed: run_skill", { name, success: result.success });
+        return {
+          content: [{ type: "text" as const, text: text.slice(0, 4000) }],
+          isError: !result.success,
+        };
+      } catch (error: any) {
+        log.error("Tool failed: run_skill", { name, error: error.message });
+        return {
+          content: [{ type: "text" as const, text: `Skill execution error: ${error.message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: List cron jobs
+  server.tool(
+    "list_cron_jobs",
+    "List all configured cron jobs with their schedules and status",
+    {},
+    async () => {
+      log.info("Tool invoked: list_cron_jobs");
+
+      const scheduler = new CronScheduler();
+      scheduler.start();
+      const jobs = scheduler.getJobStates();
+      scheduler.stop();
+
+      if (jobs.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No cron jobs configured. Create a crons.json file to define jobs." }],
+        };
+      }
+
+      const output = jobs
+        .map((j) => {
+          const status = !j.enabled
+            ? "disabled"
+            : j.lastSuccess === null
+              ? "pending"
+              : j.lastSuccess
+                ? "ok"
+                : "failed";
+          const lastRun = j.lastRunAt ? j.lastRunAt.toLocaleString() : "never";
+          return `${j.name} (${j.schedule}): ${status} | Last: ${lastRun} | Runs: ${j.runCount} | Fails: ${j.failCount}`;
+        })
+        .join("\n");
+
+      log.debug("Tool completed: list_cron_jobs", { count: jobs.length });
       return {
         content: [{ type: "text" as const, text: output }],
       };

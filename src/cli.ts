@@ -35,8 +35,10 @@ Commands:
   (default)   Start the gateway (multi-client)
   mcp         Start the MCP server
   both        Start gateway + MCP server
+  sidecar     Start the host sidecar (for container mode)
   init        Interactive setup wizard
   status      Show service status and config validation
+  health      Show system health and resource metrics
   logs        Tail service logs (--stderr for error log)
   restart     Restart the background service
   doctor      Run diagnostic checks
@@ -51,8 +53,10 @@ Examples:
   deskmate                  Start the gateway
   deskmate mcp              Start the MCP server
   deskmate both             Start gateway + MCP
+  deskmate sidecar          Start the host sidecar
   deskmate init             Run the setup wizard
   deskmate status           Check service status
+  deskmate health           Show system health
   deskmate logs             Tail stdout.log
   deskmate logs --stderr    Tail stderr.log
   deskmate restart          Restart the service
@@ -60,6 +64,7 @@ Examples:
   deskmate --version        Print version
 
 Environment:
+  INSTALL_MODE              Install mode: native (default), container
   ALLOWED_USERS             Multi-client allowlist (e.g. telegram:123,discord:456)
   TELEGRAM_BOT_TOKEN        Telegram bot token
   AGENT_PROVIDER            Agent provider: claude-code, codex, gemini, opencode (default: claude-code)
@@ -156,10 +161,18 @@ async function main() {
 
       await gateway.start();
 
-      if (!noTray) {
+      if (!noTray && process.env.INSTALL_MODE !== "container") {
         const { startTray } = await import("./cli/tray");
         startTray(VERSION);
       }
+      break;
+    }
+
+    case "sidecar": {
+      console.log("Starting sidecar...");
+      const { startSidecar, setupGracefulShutdown } = await import("./sidecar");
+      const server = await startSidecar();
+      setupGracefulShutdown(server);
       break;
     }
 
@@ -197,7 +210,7 @@ async function main() {
 
       gateway.start().catch(console.error);
 
-      if (!noTray) {
+      if (!noTray && process.env.INSTALL_MODE !== "container") {
         const { startTray } = await import("./cli/tray");
         startTray(VERSION);
       }
@@ -216,6 +229,12 @@ async function main() {
     case "status": {
       const { runStatus } = await import("./cli/ops");
       await runStatus();
+      break;
+    }
+
+    case "health": {
+      const { runHealth } = await import("./cli/ops");
+      await runHealth();
       break;
     }
 

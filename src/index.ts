@@ -91,8 +91,10 @@ async function main() {
 
       await gateway.start();
 
-      const { startTray } = await import("./cli/tray");
-      startTray(VERSION);
+      if (process.env.INSTALL_MODE !== "container") {
+        const { startTray } = await import("./cli/tray");
+        startTray(VERSION);
+      }
       break;
     }
 
@@ -130,8 +132,10 @@ async function main() {
       // Start gateway in background, MCP on stdio
       gateway.start().catch(console.error);
 
-      const { startTray: startTrayBoth } = await import("./cli/tray");
-      startTrayBoth(VERSION);
+      if (process.env.INSTALL_MODE !== "container") {
+        const { startTray: startTrayBoth } = await import("./cli/tray");
+        startTrayBoth(VERSION);
+      }
 
       await startMcpServer();
       break;

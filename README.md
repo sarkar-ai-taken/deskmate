@@ -54,14 +54,10 @@ The Gateway is the control plane. Each messaging platform is a thin I/O adapter.
 
 ## Responsibility Boundary
 
-Deskmate’s responsibility is **execution**.
+Deskmate's responsibility is **execution**.
 
 - It turns intent into concrete system actions
 - It does not coordinate other agents
-- It does not monitor agent health or resource usage
-
-If you want visibility into what agents are doing on your machine,
-see **Riva**, the local observability layer.
 
 ## Highlights
 
@@ -71,6 +67,10 @@ see **Riva**, the local observability layer.
 - **Multi-agent backends** — ships with Claude Code (default), Codex (OpenAI), Gemini CLI (Google), and OpenCode. Switch with `AGENT_PROVIDER=codex` in `.env`.
 - **Approve-by-default** — safe commands auto-approve. Protected folders (Desktop, Documents, etc.) prompt for confirmation via inline buttons.
 - **MCP server** — expose your machine as a tool server for Claude Desktop or any MCP client.
+- **Skills system** — define reusable multi-step workflows in `skills.json`. Skills can run commands, agent prompts, or other skills. Hot-reloaded on change.
+- **Cron scheduler** — schedule recurring jobs (commands, agent queries, or skills) via `crons.json`. Results are delivered to your active chat channels.
+- **Health monitoring** — built-in health checks for CPU, memory, disk, agent availability. Accessible via `/health` in Telegram, `deskmate health` on CLI, or the `get_health` MCP tool.
+- **Docker container mode** — run the core in Docker with a native sidecar for host commands. Set `INSTALL_MODE=container` and use `docker-compose up`.
 - **Runs as service** — launchd (macOS) or systemd (Linux) integration, starts on boot, restarts on crash.
 - **Extensible agent layer** — bring your own agent via `registerProvider()`.
 
@@ -142,6 +142,7 @@ To reconfigure later: `deskmate init`
 | Gateway | `deskmate` | Multi-client gateway (default) |
 | MCP | `deskmate mcp` | MCP server for Claude Desktop |
 | Both | `deskmate both` | Gateway + MCP simultaneously |
+| Sidecar | `deskmate sidecar` | Host sidecar for container mode |
 
 > **Note:** `deskmate telegram` still works but is a deprecated alias that starts the gateway.
 
@@ -166,7 +167,10 @@ The gateway auto-registers clients based on available env vars. If `TELEGRAM_BOT
 | `/start` | Show welcome message |
 | `/screenshot` | Take a screenshot and send it |
 | `/status` | Show system info and session status |
-| `/reset` | Clear conversation memory and start fresh |
+| `/health` | Show system health and resource metrics |
+| `/skill` | List or run a registered skill |
+| `/cron` | Show cron job status |
+| `/reset` | Clear conversation memory |
 
 ## Usage Examples
 
@@ -218,6 +222,49 @@ Deskmate focuses on executing actions safely.
 
 For monitoring agent behavior, resource usage, and failures across
 multiple local agents, see **Riva** (local-first agent observability).
+
+## Skills
+
+Skills are reusable multi-step workflows defined in JSON. Place a `skills.json` in your project root or `~/.config/deskmate/skills.json` for global skills. Skills hot-reload when the file changes.
+
+```json
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "deploy",
+      "description": "Build and deploy the project",
+      "parameters": [{ "name": "env", "required": true }],
+      "steps": [
+        { "type": "command", "command": "npm run build" },
+        { "type": "command", "command": "./deploy.sh {{env}}" }
+      ]
+    }
+  ]
+}
+```
+
+Each step can be a `command` (shell), `prompt` (agent query), or `skill` (nested skill). Run via `/skill deploy env=staging` in Telegram or the `run_skill` MCP tool.
+
+## Cron Jobs
+
+Schedule recurring jobs via `crons.json` (project-local or `~/.config/deskmate/crons.json`).
+
+```json
+{
+  "version": 1,
+  "jobs": [
+    {
+      "name": "daily-backup",
+      "schedule": "0 2 * * *",
+      "action": { "type": "command", "command": "tar czf ~/backup.tar.gz ~/Documents" },
+      "notify": true
+    }
+  ]
+}
+```
+
+Actions can be `command`, `agent_query` (natural language prompt), or `skill`. Set `notify: true` to receive results in your active chat channels. Check status with `/cron` in Telegram or `list_cron_jobs` MCP tool.
 
 ## Security
 
@@ -275,7 +322,6 @@ Deskmate is intentionally not:
 - A multi-agent orchestration framework
 - A cloud-hosted control plane
 - A long-running autonomous system
-- A monitoring or observability tool
 
 These constraints are deliberate.
 
@@ -317,6 +363,17 @@ src/
 │   │       └── opencode.ts       # OpenCode
 │   ├── approval.ts               # Approval manager (auto-approve + manual)
 │   ├── executor.ts               # Command execution, file I/O, screenshots
+│   ├── executor-factory.ts       # Creates local or remote executor
+│   ├── executor-interface.ts     # IExecutor interface
+│   ├── remote-executor.ts        # Executor that delegates to sidecar
+│   ├── health.ts                 # Health monitoring (CPU, memory, disk, agent)
+│   ├── skills/                   # Skills system
+│   │   ├── types.ts              # Skill definition schema (Zod)
+│   │   ├── registry.ts           # Loads skills.json, hot-reloads on change
+│   │   └── executor.ts           # Runs multi-step skill workflows
+│   ├── cron/                     # Cron scheduler
+│   │   ├── types.ts              # Cron job definition schema (Zod)
+│   │   └── scheduler.ts          # node-cron based job runner
 │   └── logger.ts                 # Structured logging
 ├── gateway/
 │   ├── types.ts                  # MessagingClient, MessageHandler interfaces
@@ -325,6 +382,9 @@ src/
 │   └── session.ts                # Session manager (composite keys, idle pruning)
 ├── clients/
 │   └── telegram.ts               # Telegram adapter (grammY)
+├── sidecar/                      # Host sidecar for container mode
+│   ├── server.ts                 # Express server exposing executor over HTTP
+│   └── cli.ts                    # Sidecar CLI entry point
 └── mcp/
     └── server.ts                 # MCP server
 ```
@@ -356,6 +416,36 @@ class MyAgent implements AgentProvider {
 registerProvider("my-agent", MyAgent);
 // then set AGENT_PROVIDER=my-agent in .env
 ```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `deskmate` | Start the gateway (default mode) |
+| `deskmate init` | Interactive setup wizard |
+| `deskmate status` | Show service status and config validation |
+| `deskmate health` | Show system health and resource metrics |
+| `deskmate logs` | Tail stdout.log (`--stderr` for error log) |
+| `deskmate restart` | Restart the background service |
+| `deskmate doctor` | Run diagnostic checks |
+| `deskmate sidecar` | Start the host sidecar (container mode) |
+
+## Docker / Container Mode
+
+Run Deskmate in a Docker container with a native sidecar handling host-level commands (screenshots, file access).
+
+```bash
+# Set install mode
+INSTALL_MODE=container
+
+# Start the sidecar on the host
+deskmate sidecar
+
+# Start the container
+docker-compose up -d
+```
+
+The `Dockerfile` and `docker-compose.yml` are included in the package. The sidecar exposes a local HTTP API that the containerized core uses to execute commands on the host.
 
 ## Service Management
 

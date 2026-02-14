@@ -13,6 +13,7 @@ import {
   AgentQueryOptions,
 } from "../types";
 import { createLogger } from "../../logger";
+import { isContainerMode } from "../../executor-factory";
 
 const log = createLogger("ClaudeCodeProvider");
 
@@ -42,9 +43,15 @@ export class ClaudeCodeProvider implements AgentProvider {
     prompt: string,
     options?: AgentQueryOptions
   ): AsyncGenerator<AgentStreamEvent, void, unknown> {
+    let cwd = options?.workingDir || process.env.WORKING_DIR || process.env.HOME || "/";
+    // In container mode, map host paths to /hostfs bind mount
+    if (isContainerMode() && !cwd.startsWith("/hostfs")) {
+      cwd = `/hostfs${cwd}`;
+    }
+
     const queryOptions: any = {
       systemPrompt: options?.systemPrompt,
-      cwd: options?.workingDir || process.env.WORKING_DIR || process.env.HOME || "/",
+      cwd,
       allowedTools: options?.allowedTools || this.defaultTools,
       permissionMode: "bypassPermissions",
       maxTurns: options?.maxTurns || 10,
@@ -131,6 +138,11 @@ export class ClaudeCodeProvider implements AgentProvider {
   }
 
   async isAvailable(): Promise<boolean> {
+    // In container mode, the SDK runs in-process — just check for the API key
+    if (isContainerMode()) {
+      return !!process.env.ANTHROPIC_API_KEY;
+    }
+
     try {
       // Check if claude CLI is available
       const { exec } = await import("child_process");

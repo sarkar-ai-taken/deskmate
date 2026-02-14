@@ -404,6 +404,138 @@ async function installLinuxService(
 }
 
 // ---------------------------------------------------------------------------
+// Sidecar service installation helpers (container mode)
+// ---------------------------------------------------------------------------
+
+const SIDECAR_PLIST_NAME = "com.deskmate.sidecar";
+
+function sidecarPlistPath(): string {
+  return path.join(os.homedir(), "Library", "LaunchAgents", `${SIDECAR_PLIST_NAME}.plist`);
+}
+
+function sidecarSystemdPath(): string {
+  return path.join(os.homedir(), ".config", "systemd", "user", "deskmate-sidecar.service");
+}
+
+function buildSidecarPlist(
+  execStart: string,
+  workingDir: string,
+  logsDir: string,
+): string {
+  const parts = execStart.split(" ");
+  const argsXml = parts.map((p) => `        <string>${p}</string>`).join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${SIDECAR_PLIST_NAME}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+${argsXml}
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>${workingDir}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${os.homedir()}/.local/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>${logsDir}/sidecar-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${logsDir}/sidecar-stderr.log</string>
+</dict>
+</plist>`;
+}
+
+function buildSidecarSystemdUnit(
+  execStart: string,
+  workingDir: string,
+  logsDir: string,
+): string {
+  return `[Unit]
+Description=Deskmate Sidecar - Host executor for container mode
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${execStart}
+WorkingDirectory=${workingDir}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${os.homedir()}/.local/bin
+Restart=always
+RestartSec=5
+
+StandardOutput=append:${logsDir}/sidecar-stdout.log
+StandardError=append:${logsDir}/sidecar-stderr.log
+
+[Install]
+WantedBy=default.target`;
+}
+
+async function installMacosSidecarService(
+  execStart: string,
+  workingDir: string,
+  logsDir: string,
+): Promise<void> {
+  const dest = sidecarPlistPath();
+
+  try {
+    execSync(`launchctl list 2>/dev/null | grep -q "${SIDECAR_PLIST_NAME}" && launchctl unload "${dest}"`, {
+      stdio: "ignore",
+      shell: "/bin/bash",
+    });
+  } catch {
+    // not loaded
+  }
+
+  await fs.mkdir(path.dirname(dest), { recursive: true });
+  await fs.mkdir(logsDir, { recursive: true });
+  await fs.writeFile(dest, buildSidecarPlist(execStart, workingDir, logsDir), "utf-8");
+
+  execSync(`launchctl load "${dest}"`);
+  console.log("\n  Sidecar service installed and started via launchd.");
+  console.log(`  Plist: ${dest}`);
+}
+
+async function installLinuxSidecarService(
+  execStart: string,
+  workingDir: string,
+  logsDir: string,
+): Promise<void> {
+  const dest = sidecarSystemdPath();
+
+  try {
+    execSync("systemctl --user stop deskmate-sidecar.service", { stdio: "ignore" });
+  } catch {
+    // not running
+  }
+
+  await fs.mkdir(systemdDir(), { recursive: true });
+  await fs.mkdir(logsDir, { recursive: true });
+  await fs.writeFile(dest, buildSidecarSystemdUnit(execStart, workingDir, logsDir), "utf-8");
+
+  execSync("systemctl --user daemon-reload");
+  execSync("systemctl --user enable deskmate-sidecar.service");
+  execSync("systemctl --user start deskmate-sidecar.service");
+
+  console.log("\n  Sidecar service installed and started via systemd.");
+  console.log(`  Unit file: ${dest}`);
+}
+
+// ---------------------------------------------------------------------------
 // macOS permissions helper
 // ---------------------------------------------------------------------------
 
@@ -615,8 +747,28 @@ async function configureClaudeDesktop(
 // Management commands summary
 // ---------------------------------------------------------------------------
 
-function printManagementCommands(platform: Platform, logsDir: string): void {
+function printManagementCommands(platform: Platform, logsDir: string, containerMode = false): void {
   console.log("\nManagement commands:\n");
+
+  if (containerMode) {
+    console.log("  View logs:          docker compose logs -f");
+    console.log(`  View sidecar logs:  tail -f ${logsDir}/sidecar-stdout.log`);
+    console.log("  Stop container:     docker compose down");
+    console.log("  Start container:    docker compose up -d");
+    console.log("  Restart container:  docker compose restart");
+    console.log("  Check status:       docker compose ps");
+
+    if (platform === "macos") {
+      const dest = sidecarPlistPath();
+      console.log(`  Stop sidecar:     launchctl unload "${dest}"`);
+      console.log(`  Start sidecar:    launchctl load "${dest}"`);
+    } else if (platform === "linux") {
+      console.log("  Stop sidecar:     systemctl --user stop deskmate-sidecar.service");
+      console.log("  Start sidecar:    systemctl --user start deskmate-sidecar.service");
+    }
+    return;
+  }
+
   console.log(`  View logs:        tail -f ${logsDir}/stdout.log`);
 
   if (platform === "macos") {
@@ -634,6 +786,37 @@ function printManagementCommands(platform: Platform, logsDir: string): void {
     console.log("  Stop service:     systemctl --user stop deskmate.service");
     console.log("  Start service:    systemctl --user start deskmate.service");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Install mode selection
+// ---------------------------------------------------------------------------
+
+async function askInstallMode(
+  rl: readline.Interface,
+  currentMode: string,
+): Promise<string> {
+  console.log("\n--- Install Mode ---\n");
+  console.log("  1. Native (default)");
+  console.log("     Full host access — everything runs directly on your machine");
+  console.log("");
+  console.log("  2. Container (Docker + host sidecar)");
+  console.log("     Core runs in Docker, commands execute via a native sidecar process");
+  console.log("");
+
+  const current = currentMode === "container" ? "2" : "1";
+  const answer = await ask(rl, `Choose mode [1/2] (current: ${current}): `);
+
+  if (answer === "2") {
+    // Verify Docker is available
+    if (!checkBinary("docker")) {
+      console.log("\n  WARNING: Docker not found in PATH.");
+      console.log("  Install Docker Desktop from: https://docs.docker.com/get-docker/\n");
+    }
+    return "container";
+  }
+
+  return "native";
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +851,12 @@ export async function runInitWizard(): Promise<void> {
 
   // Ensure config directory exists
   await fs.mkdir(paths.configDir, { recursive: true });
+
+  // ----- Install Mode Selection -----
+
+  const existingEnvPath = path.join(paths.configDir, ".env");
+  const existingEnvForMode = await loadExistingEnv(existingEnvPath);
+  const installMode = await askInstallMode(rl, existingEnvForMode.INSTALL_MODE || "native");
 
   // ----- Step 1: .env wizard -----
 
@@ -756,6 +945,9 @@ export async function runInitWizard(): Promise<void> {
   const botName = await ask(rl, `Bot name [${defaultBotName}]: `);
   env.BOT_NAME = botName || defaultBotName;
 
+  // Install mode
+  env.INSTALL_MODE = installMode;
+
   // Carry over other existing values that we don't prompt for
   if (existing.LOG_LEVEL) env.LOG_LEVEL = existing.LOG_LEVEL;
   if (existing.REQUIRE_APPROVAL_FOR_ALL) env.REQUIRE_APPROVAL_FOR_ALL = existing.REQUIRE_APPROVAL_FOR_ALL;
@@ -798,18 +990,18 @@ export async function runInitWizard(): Promise<void> {
   const runMode = await askModeChoice(rl);
   console.log(`  Mode selected: ${runMode}`);
 
-  // ----- Step 4: macOS permissions -----
+  // ----- Step 4: macOS permissions (native only) -----
 
-  if (platform === "macos") {
+  if (platform === "macos" && installMode !== "container") {
     const setupPerms = await askYesNo(rl, "\nConfigure macOS permissions?");
     if (setupPerms) {
       await offerMacosPermissions(rl);
     }
   }
 
-  // ----- Step 5: macOS folder access -----
+  // ----- Step 5: macOS folder access (native only) -----
 
-  if (platform === "macos") {
+  if (platform === "macos" && installMode !== "container") {
     const setupFolders = await askYesNo(rl, "\nConfigure folder access?");
     if (setupFolders) {
       const foldersStr = await offerMacosFolderAccess(rl);
@@ -827,16 +1019,63 @@ export async function runInitWizard(): Promise<void> {
     }
   }
 
-  // ----- Step 6: Sleep prevention (macOS, gateway/both) -----
+  // ----- Step 6: Sleep prevention (macOS, gateway/both, native only) -----
 
   let useCaffeinate = false;
-  if (platform === "macos" && (runMode === "gateway" || runMode === "both")) {
+  if (platform === "macos" && (runMode === "gateway" || runMode === "both") && installMode !== "container") {
     useCaffeinate = await configureSleepPrevention(rl);
   }
 
   // ----- Step 7: Service installation -----
 
-  if (platform === "macos" || platform === "linux") {
+  if (installMode === "container") {
+    // ── Container mode: Docker + sidecar ──
+    console.log("\n--- Container Mode Setup ---\n");
+
+    const buildDocker = await askYesNo(rl, "Build Docker image now? (docker compose build)");
+    if (buildDocker) {
+      try {
+        console.log("  Building Docker image...");
+        execSync("docker compose build", { stdio: "inherit", cwd: paths.packageDir });
+        console.log("  Docker image built successfully.");
+      } catch (err: any) {
+        console.error(`  Failed to build Docker image: ${err.message}`);
+      }
+    }
+
+    const startContainer = await askYesNo(rl, "Start container now? (docker compose up -d)");
+    if (startContainer) {
+      try {
+        execSync("docker compose up -d", { stdio: "inherit", cwd: paths.packageDir });
+        console.log("  Container started.");
+      } catch (err: any) {
+        console.error(`  Failed to start container: ${err.message}`);
+      }
+    }
+
+    // Install sidecar as a service
+    if (platform === "macos" || platform === "linux") {
+      const installSidecar = await askYesNo(rl, "Install sidecar as background service?");
+      if (installSidecar) {
+        const logsDir = path.join(paths.configDir, "logs");
+        const sidecarExec = paths.execStart("sidecar");
+
+        try {
+          if (platform === "macos") {
+            await installMacosSidecarService(sidecarExec, paths.configDir, logsDir);
+          } else {
+            await installLinuxSidecarService(sidecarExec, paths.configDir, logsDir);
+          }
+        } catch (err: any) {
+          console.error(`\n  Failed to install sidecar service: ${err.message}`);
+        }
+      }
+    }
+
+    printManagementCommands(platform, path.join(paths.configDir, "logs"), true);
+
+  } else if (platform === "macos" || platform === "linux") {
+    // ── Native mode ──
     console.log("");
     const installService = await askYesNo(rl, "Install as background service?");
 

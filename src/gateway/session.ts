@@ -81,6 +81,10 @@ export class SessionManager {
     return this.sessions.has(this.key(clientType, channelId));
   }
 
+  size(): number {
+    return this.sessions.size;
+  }
+
   /** Remove sessions that have been idle longer than idleTimeoutMs */
   private pruneIdle(): void {
     const now = Date.now();
