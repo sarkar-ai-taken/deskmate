@@ -38,6 +38,52 @@ echo -e "${NC}"
 echo -e "Detected platform: ${GREEN}$PLATFORM${NC}"
 
 # =============================================================================
+# Detect install mode
+# =============================================================================
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONTAINER_MODE=false
+if [ -f "$PROJECT_DIR/.env" ] && grep -q "^INSTALL_MODE=container" "$PROJECT_DIR/.env"; then
+    CONTAINER_MODE=true
+    echo -e "${YELLOW}Detected container mode installation${NC}"
+fi
+
+# =============================================================================
+# Container mode cleanup
+# =============================================================================
+if [ "$CONTAINER_MODE" = true ]; then
+    echo -e "${YELLOW}Stopping and removing Docker container...${NC}"
+    cd "$PROJECT_DIR"
+    docker compose down --rmi local 2>/dev/null || true
+    echo -e "${GREEN}✓ Container removed${NC}"
+
+    # Remove sidecar service
+    if [ "$PLATFORM" = "macos" ]; then
+        SIDECAR_PLIST="$HOME/Library/LaunchAgents/com.deskmate.sidecar.plist"
+        if [ -f "$SIDECAR_PLIST" ]; then
+            launchctl unload "$SIDECAR_PLIST" 2>/dev/null || true
+            rm "$SIDECAR_PLIST"
+            echo -e "${GREEN}✓ Sidecar service removed${NC}"
+        fi
+    elif [ "$PLATFORM" = "linux" ]; then
+        if systemctl --user is-active deskmate-sidecar.service &>/dev/null; then
+            systemctl --user stop deskmate-sidecar.service 2>/dev/null || true
+        fi
+        if systemctl --user is-enabled deskmate-sidecar.service &>/dev/null; then
+            systemctl --user disable deskmate-sidecar.service 2>/dev/null || true
+        fi
+        SIDECAR_UNIT="$HOME/.config/systemd/user/deskmate-sidecar.service"
+        if [ -f "$SIDECAR_UNIT" ]; then
+            rm "$SIDECAR_UNIT"
+            systemctl --user daemon-reload 2>/dev/null || true
+            echo -e "${GREEN}✓ Sidecar service removed${NC}"
+        fi
+    fi
+
+    # Remove socket
+    rm -f /var/run/deskmate/sidecar.sock 2>/dev/null || true
+fi
+
+# =============================================================================
 # Stop and remove the service (platform-specific)
 # =============================================================================
 if [ "$PLATFORM" = "macos" ]; then

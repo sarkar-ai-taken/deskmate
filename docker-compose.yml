@@ -1,0 +1,28 @@
+# Deskmate — Container Mode
+#
+# The core (gateway, Telegram, AI agent) runs in the container.
+# The sidecar runs natively on the host:
+#   deskmate sidecar
+#
+# Start:
+#   docker compose up -d
+#
+# Logs:
+#   docker compose logs -f
+
+services:
+  deskmate:
+    build: .
+    env_file: .env
+    environment:
+      - INSTALL_MODE=container
+      - SIDECAR_SOCKET_PATH=/var/run/deskmate/sidecar.sock
+    volumes:
+      # Unix socket for sidecar communication
+      - /var/run/deskmate:/var/run/deskmate
+      # Host filesystem (read-write) for ClaudeCodeProvider SDK tools
+      - /:/hostfs:rw
+    # Host networking for Telegram API access
+    network_mode: host
+    command: ["gateway", "--no-tray"]
+    restart: unless-stopped

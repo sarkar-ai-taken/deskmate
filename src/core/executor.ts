@@ -4,8 +4,8 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { createLogger } from "./logger";
-import { approvalManager } from "./approval";
 import { getScreenshotCommand } from "./platform";
+import type { IExecutor } from "./executor-interface";
 
 const log = createLogger("Executor");
 
@@ -28,7 +28,7 @@ export interface FileInfo {
   modified: Date;
 }
 
-export class Executor {
+export class Executor implements IExecutor {
   private workingDir: string;
 
   constructor(workingDir?: string) {
@@ -85,12 +85,6 @@ export class Executor {
 
     log.debug("Reading file", { filePath, resolvedPath });
 
-    // Check if folder access approval is needed
-    const approved = await approvalManager.requestFolderAccess(resolvedPath);
-    if (!approved) {
-      throw new Error(`Access to ${resolvedPath} was not approved`);
-    }
-
     const content = await fs.readFile(resolvedPath, "utf-8");
 
     log.info("File read successfully", { filePath: resolvedPath, size: content.length });
@@ -103,12 +97,6 @@ export class Executor {
       : path.join(this.workingDir, filePath);
 
     log.debug("Writing file", { filePath, resolvedPath, contentLength: content.length });
-
-    // Check if folder access approval is needed
-    const approved = await approvalManager.requestFolderAccess(resolvedPath);
-    if (!approved) {
-      throw new Error(`Access to ${resolvedPath} was not approved`);
-    }
 
     await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
     await fs.writeFile(resolvedPath, content, "utf-8");
@@ -124,12 +112,6 @@ export class Executor {
       : this.workingDir;
 
     log.debug("Listing directory", { dirPath, resolvedPath });
-
-    // Check if folder access approval is needed
-    const approved = await approvalManager.requestFolderAccess(resolvedPath);
-    if (!approved) {
-      throw new Error(`Access to ${resolvedPath} was not approved`);
-    }
 
     const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
     const files: FileInfo[] = [];

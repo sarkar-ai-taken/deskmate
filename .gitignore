@@ -45,3 +45,4 @@ data/
 
 # Package manager locks (optional - remove if you want to commit package-lock.json)
 # package-lock.json
+.env.new
